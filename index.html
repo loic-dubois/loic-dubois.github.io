@@ -5,27 +5,18 @@
 <head>
 <style>
 
-
-
 body {
 	font-family: 'Recursive', sans-serif;
 	font-variation-settings: "CRSV" 0.5;
 	color:#333333;
-	font-size: 16px;
-	line-height: 150%;
+	line-height: 120%;
 	align-items: center;
 }
 
 
 .main-div {
     width: 1300px;
-    
-    position: absolute;
-    top:0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    
+    position: center;    
     margin: auto;
 }
 
@@ -40,39 +31,10 @@ a:link, a:visited, a:hover, a:active{
   color: #0e80cd;
 }
 
-.rtable th, .rtable td {
-  padding-top: 5px;
-  padding-bottom: 5px;
-  padding-left: 20px;
-  padding-right: 20px;
-  width:500px;
-  height:50px;
-}
-
-table {
-  border-collapse: collapse;
-}
-
-.rtable tr{
-  border-top : 3px solid black;
-  border-bottom : 3px solid black;
-}
 
 .presentation {
-width:900px;
 text-align:justify;
 }
-
-.leftimg {
-float: left;
-height: 130px;
-}
-
-.rightimg {
-float: right;
-height: 130px;
-}
-
 
 </style>
 </head>
@@ -83,64 +45,45 @@ height: 130px;
 <center>
 <h1>Loïc Dubois</h1>
 <p>ldubois@nd.edu</p>
-
-<img class=leftimg src=logo.png>
-<p class="presentation">
-Postdoc at <a href="https://www.nd.edu/">University of Notre Dame</a>, supervised by <a href="https://wolfchambers.github.io/">Erin Chambers</a>. I design and analyse algorithms for geometric and topological problems. I defended my thesis on September 26, 2025; You may have a look at the <a href="papers/Thesis.pdf">manuscript</a>, and the <a href="papers/ThesisSlides.pdf">slides</a>.
-</p>
-<p class="presentation">I used to be a phd student at <a href="https://www.univ-gustave-eiffel.fr/en/">Université Gustave Eiffel</a>, supervised by <a href="http://monge.univ-mlv.fr/~colinde/">Éric Colin de Verdière</a> and <a href="https://members.loria.fr/VDespre/">Vincent Despré</a>. Before that, I studied at <a href="https://www.ens-lyon.fr/">École Normale Supérieure de Lyon</a>.
-</p>
-
 </center>
 
-<h2>Research</h2>
-<table class="rtable">
-  <tr>
-    <td><a href="papers/ComputeDelaunay.pdf">Computing the intrinsic Delaunay triangulation of a closed polyhedral surface</a></td>
-    <td></td>
-    <td>to appear in SOCG 2026</td>
-  </tr>
-  <tr>
-    <td><a href="papers/Tutte.pdf">A discrete analog of Tutte's barycentric embeddings on surfaces</a></td>
-    <td>with Colin de Verdière and Despré</td>
-    <td>SODA 2025, to appear in TheoretiCS</td>
-  </tr>
-  <tr>
-    <td><a href="papers/Untangling.pdf">Untangling graphs on surfaces</a></td>
-    <td>with Colin de Verdière and Despré</td>
-    <td>SODA 2024, journal version submitted</td>
-  </tr>
-  <tr>
-    <td><a href="papers/Curves.pdf">Making multicurves cross minimally on surfaces</a></td>
-    <td></td>
-    <td>ESA 2024, journal version submitted</td>
-  </tr>
-  <tr>
-    <td><a href="papers/Tori.pdf">A bound for Delaunay flip algorithms on flat tori</a></td>
-    <td></td>
-    <td>CCCG 2022 (best student paper), CGT 2023</td>
-  </tr>
-  <tr>
-    <td><a href="papers/Colorings.pdf">Two lower bounds for p-centered colorings</a></td>
-    <td>with Joret, Perarnau, Pilipczuk, and Pitois</td>
-    <td>DMTCS 2020</td>
-  </tr>
-</table>
+<p class="presentation">
+I am a postdoc at <a href="https://www.nd.edu/">University of Notre Dame</a>, supervised by <a href="https://wolfchambers.github.io/">Erin Chambers</a>. I design and analyse algorithms for geometric and topological problems, with a focus on graphs drawn on surfaces. I defended my PhD thesis on September 26, 2025. I used to be a phd student at <a href="https://www.univ-gustave-eiffel.fr/en/">Université Gustave Eiffel</a>, supervised by <a href="http://monge.univ-mlv.fr/~colinde/">Éric Colin de Verdière</a> and <a href="https://members.loria.fr/VDespre/">Vincent Despré</a>. Before that, I studied at <a href="https://www.ens-lyon.fr/">École Normale Supérieure de Lyon</a>.
+</p>
+
+
+
+
+<h2>Papers</h2>
+
+<ul>
+<li><a href="papers/ComputeDelaunay.pdf">Computing the intrinsic Delaunay triangulation of a closed polyhedral surface</a>,  to appear in SOCG 2026.</li>
+<li><a href="papers/Tutte.pdf">A discrete analog of Tutte's barycentric embeddings on surfaces</a>, with É. Colin de Verdière and V. Despré, SODA 2025, to appear in TheoretiCS.</li>
+<li><a href="papers/Curves.pdf">Making multicurves cross minimally on surfaces</a>, ESA 2024, journal version submitted.</li>
+<li><a href="papers/Untangling.pdf">Untangling graphs on surfaces</a>, with É. Colin de Verdière and V. Despré, SODA 2024, journal version submitted.</li>
+<li><a href="papers/Tori.pdf">A bound for Delaunay flip algorithms on flat tori</a>, CCCG 2022 (best student paper), CGT 2023.</li>
+<li><a href="papers/Colorings.pdf">Two lower bounds for p-centered colorings</a>, with G. Joret, G. Perarnau, M. Pilipczuk, and F. Pitois, DMTCS 2020.</li>
+</ul>
 
 <h2>Software</h2>
-<table class="rtable">
-  <tr>
-    <td><a href="https://doc.cgal.org/6.1-beta1/Manual/packages.html#PkgHyperbolicSurfaceTriangulation2">2D Triangulations on Hyperbolic Surfaces</a></td>
-    <td>with Despré, Pouget, and Teillaud</td>
-    <td>CGAL package</td>
-  </tr>
-</table>
+
+<ul>
+<li><a href="https://doc.cgal.org/6.1-beta1/Manual/packages.html#PkgHyperbolicSurfaceTriangulation2">2D Triangulations on Hyperbolic Surfaces</a>, with V. Despré, M. Pouget, and M. Teillaud, 2025, CGAL package.</li>
+</ul>
+
+<h2>PhD thesis</h2>
+<ul>
+<li><a href="papers/Thesis.pdf">manuscript</a></li>
+<li><a href="papers/ThesisSlides.pdf">slides</a></li>
+</ul>
 
 <h2>Reviews</h2>
-SODA, SOCG, STACS, GD (conferences), also JOCG, DCG (journals)
+
+I have reviewed articles for the conferences SODA, SOCG, GD, and STACS, and for the journal DCG. I am reviewing an article for the journal JOCG.
 
 <h2>Teaching</h2>
-Assembler, OpenGL, SQL, Algorithms and programming in Python, Maths for computer scientists
+
+During my PhD, I teached Assembler, OpenGL, SQL, algorithms and programming in Python, and maths for computer scientists.
 
 </div>
 </body>
