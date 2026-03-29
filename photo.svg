@@ -12,9 +12,9 @@
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    version="1.1"
    id="svg2"
-   width="382.80569"
-   height="472.54834"
-   viewBox="0 0 382.80569 472.54834"
+   width="362.80569"
+   height="452.54834"
+   viewBox="0 0 362.80569 452.54834"
    sodipodi:docname="photo.svg"
    inkscape:version="0.92.5 (2060ec1f9f, 2020-04-08)">
   <metadata
@@ -57,8 +57,8 @@
      id="namedview4"
      showgrid="false"
      inkscape:zoom="1.3037281"
-     inkscape:cx="-15.578355"
-     inkscape:cy="218.59578"
+     inkscape:cx="-182.0527"
+     inkscape:cy="208.59578"
      inkscape:window-x="72"
      inkscape:window-y="27"
      inkscape:window-maximized="1"
@@ -71,5 +71,6 @@
      id="image10"
      x="-203.23463"
      y="-276.88312"
-     clip-path="url(#clipPath4751)" />
+     clip-path="url(#clipPath4751)"
+     transform="translate(-10,-10)" />
 </svg>
