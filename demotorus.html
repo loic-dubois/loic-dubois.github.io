@@ -23,10 +23,10 @@
   .val { font:500 12.5px "JetBrains Mono", monospace; color:var(--ink); min-width:34px; }
   .btn { border:1px solid var(--line); background:#fff; border-radius:7px; padding:6px 11px; font:500 13px Inter, sans-serif; cursor:pointer; color:var(--ink); }
   .btn:hover { border-color:#c9c5b8; }
-  .stage { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .stage { background:#fff; overflow:hidden; }
   .cvwrap { position:relative; }
   canvas#cv { display:block; width:100%; height:min(62vh, 600px); cursor:grab; background:#ffffff; }
-  .tag { position:absolute; left:12px; top:10px; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:7px; padding:6px 10px; }
+  .tag { position:absolute; left:12px; top:10px; background:rgba(255,255,255,.92); border-radius:7px; padding:6px 10px; }
   .tag .t { font:600 15px "Source Serif 4", serif; }
   .tag .d { font-size:12.5px; color:var(--ink2); }
   .dense { position:absolute; left:12px; bottom:10px; font-size:12px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:4px 9px; border-radius:6px; display:none; }
@@ -34,7 +34,7 @@
   .ln { display:inline-block; width:16px; border-top:2.5px solid; vertical-align:3px; margin-right:6px; }
   .sw { display:inline-block; width:12px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-0.5px; }
   /* timeline scrubber */
-  .tl { display:flex; align-items:center; gap:12px; padding:10px 14px 12px; border-top:1px solid var(--line); }
+  .tl { display:flex; align-items:center; gap:12px; padding:10px 14px 12px; }
   #play { width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:#fff; cursor:pointer; font-size:13px; flex:none; }
   #strip { position:relative; flex:1; height:38px; display:flex; gap:2px; cursor:ew-resize; touch-action:none; user-select:none; }
   #strip .s { flex:1; border-radius:3px; background:#e9e6dd; position:relative; }
@@ -146,6 +146,18 @@ function cloneState(S) {
 function pruneVertices(S) {
   const used = new Set(); S.faces.forEach((F) => F.hes.forEach((h) => used.add(h.o)));
   for (const k of [...S.verts.keys()]) if (!used.has(k)) S.verts.delete(k);
+}
+// label-free description of a triangulation: each face as its cyclic sequence of edge vectors
+// (rotated to a canonical start); translations of the torus are ignored
+function canonical(S) {
+  const r = (x) => rnd(x).toString();
+  const faces = S.faces.map((F) => {
+    const vs = F.hes.map((h) => r(h.v[0]) + ',' + r(h.v[1]));
+    let best = null;
+    for (let k = 0; k < vs.length; k++) { const rot = vs.slice(k).concat(vs.slice(0, k)).join(';'); if (best === null || rot < best) best = rot; }
+    return F.region + '|' + best;
+  }).sort();
+  return faces.join('#') + '@' + S.verts.size; // up to translation: vertex positions are ignored
 }
 function signature(S) {
   return S.faces.map((F) => F.region + '|' + F.hes.map((h) => heKey(h.o, h.v)).sort().join(';')).sort().join('#');
@@ -463,9 +475,11 @@ function runAlgorithmFrom(S0, opts = {}) {
   const Lmax = Math.max(...S.faces.flatMap((F) => F.hes.map((h) => len(h.v))));
   const N = Math.ceil(Math.log2(2 + Lmax / (0.99 * sys)));
   snap('Input portalgon T', `${S.faces.length} triangles, ${S.verts.size} vertex${S.verts.size > 1 ? 'es' : ''}. Longest side L = ${fmt(Lmax)}; N = ⌈log(2 + L/s)⌉ = ${N} main iterations at most.`, 'input');
-  let mainDone = 0;
+  let mainDone = 0, cycle = null;
+  let prevPattern = null;
   for (let it = 1; it <= N; it++) {
     if (!S.faces.some((F) => F.region === 0)) break;
+    const iterStart = steps.length;
     mainDone = it;
     let a = cnt.insV; insertVertices(S, cnt); validate(S);
     snap(`Iteration ${it} · InsertVertices`, `Inserted the middle points of ${cnt.insV - a} interior edges as vertices.`, 'insV');
@@ -487,10 +501,15 @@ function runAlgorithmFrom(S0, opts = {}) {
     }
     steps[steps.length - 1].innerNote = inner;
     if (!S.faces.some((F) => F.region === 0)) { snap(`Iteration ${it} · active region empty`, 'Every face now belongs to an inactive good biface; the remaining iterations do nothing.', 'done'); break; }
+    // cycle detection: this main iteration went through exactly the same sequence of steps
+    // (same operations, same numbers of vertices and faces) as the previous one -> drop it and stop
+    const pattern = steps.slice(iterStart).map((x) => x.phase + ':' + x.stats.V + ':' + x.stats.F).join(' ');
+    if (pattern === prevPattern) { steps.length = iterStart; cycle = { at: iterStart - 1 }; steps[steps.length - 1].cycleStop = true; break; }
+    prevPattern = pattern;
   }
   const R = cloneState(S);
-  const del = delaunayByUnfolding(R, opts.maxTri || 400000);
-  return { steps, N, mainDone, cnt, R, del, sys, Lmax };
+  const del = opts.noDelaunay ? null : delaunayByUnfolding(R, opts.maxTri || 400000);
+  return { steps, N, mainDone, cnt, R, del, sys, Lmax, cycle };
 }
 
 // ---------- Delaunay tessellation from a portalgon of low happiness (simplified Prop. 1.5) ----------
@@ -668,11 +687,11 @@ const REGION_COLORS = ['#cfe8e2', '#f6dfc0', '#ddd3f0', '#f4d0d6', '#d6e4f5', '#
 const REGION_STROKE = ['#2f7f6f', '#a8661a', '#6b4fb0', '#b0475c', '#3a679e', '#6b7d22'];
 const PHASE = {
   input:    { name: 'Input',                       col: '#9aa0ab' },
-  insV:     { name: 'Split every edge in half',    col: '#2563eb' },
-  insE:     { name: 'Cut faces along shortest diagonals', col: '#60a5fa' },
-  tubes:    { name: 'Collapse cylinders',          col: '#0f9f84' },
-  delV:     { name: 'Remove vertices',             col: '#d97706' },
-  retri:    { name: 'Cut faces along shortest diagonals',              col: '#f2b866' },
+  insV:     { name: 'InsertVertices',    col: '#2563eb' },
+  insE:     { name: 'InsertEdges', col: '#60a5fa' },
+  tubes:    { name: 'Gardening, SimplifyTubes, Gardening',          col: '#0f9f84' },
+  delV:     { name: 'DeleteVertices',             col: '#d97706' },
+  retri:    { name: 'InsertEdges',              col: '#f2b866' },
   done:     { name: 'Done',                        col: '#0f9f84' },
   delaunay: { name: 'Delaunay triangulation',      col: '#1d2433' },
 };
@@ -687,10 +706,9 @@ function compute() {
   let S0;
   try {
     S0 = preset === 'rand' ? randomTriangulation(+$('nr').value, 2, seed, skew()) : makeInput([1, 0], [xval(), 2]);
-    run = runAlgorithmFrom(S0);
+    run = runAlgorithmFrom(S0, { noDelaunay: true });
   } catch (e) { $('stitle').innerHTML = '<span class="err">Run failed: ' + e.message + '</span>'; return; }
   steps = run.steps.slice();
-  steps.push({ phase: 'delaunay', S: run.del.D, stats: stats(run.del.D), cnt: run.cnt });
   const [a, b] = gaussReduce(S0.lattice[0], S0.lattice[1]);
   const R = preset === 'rand' ? 0.95 * len(b) : Math.max(2.2 * Math.sqrt(Math.abs(cross(a, b))), 1.3 * len(b));
   const mid = mul(add(a, b), 0.5);
@@ -738,9 +756,8 @@ $('strip').addEventListener('pointerdown', (e) => { if (playing) stop(); setStep
 function setStep(i) {
   cur = Math.max(0, Math.min(steps.length - 1, i));
   const st = steps[cur], s = st.stats;
-  $('stitle').textContent = `${cur + 1} · ${PHASE[st.phase].name}`;
+  $('stitle').textContent = `${cur + 1} · ${PHASE[st.phase].name}` + (st.cycleStop ? ' · then it cycles, stopped' : '');
   [...$('strip').children].forEach((el, j) => { el.classList.toggle('cur', j === cur); el.classList.toggle('past', j <= cur); });
-  const c = st.cnt, ops = c.insV + c.insE + c.delV + c.redSteps + (st.phase === 'delaunay' ? run.del.visited : 0);
   $('stats').innerHTML = [['edges', edgesOf(st.S)], ['max edge length', fmt(s.maxLen)]]
     .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
   draw();
