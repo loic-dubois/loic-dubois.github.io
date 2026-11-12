@@ -59,8 +59,8 @@
       <button data-p="tx">Two skinny triangles</button>
     </div>
     <div class="ctl" id="crand">
-      vertices <input type="range" id="nr" min="10" max="300" step="1" value="40"><span class="val" id="nv">40</span>
-      skew <input type="range" id="tr" min="0" max="3" step="0.01" value="0.7"><span class="val" id="tv">5</span>
+      vertices <input type="range" id="nr" min="10" max="300" step="1" value="12"><span class="val" id="nv">12</span>
+      skew <input type="range" id="tr" min="0" max="3" step="0.0001" value="1.7853"><span class="val" id="tv">5</span>
       <button class="btn" id="seed">New</button>
     </div>
     <div class="ctl" id="ctx" style="display:none">
@@ -500,7 +500,7 @@ function runAlgorithmFrom(S0, opts = {}) {
       if (signature(S) === sig0) break; // fixed point: the remaining inner iterations are no-ops
     }
     steps[steps.length - 1].innerNote = inner;
-    if (!S.faces.some((F) => F.region === 0)) { snap(`Iteration ${it} · active region empty`, 'Every face now belongs to an inactive good biface; the remaining iterations do nothing.', 'done'); break; }
+    if (!S.faces.some((F) => F.region === 0)) { steps[steps.length - 1].emptyStop = true; break; } // active region empty: nothing left to do
     // cycle detection: this main iteration went through exactly the same sequence of steps
     // (same operations, same numbers of vertices and faces) as the previous one -> drop it and stop
     const pattern = steps.slice(iterStart).map((x) => x.phase + ':' + x.stats.V + ':' + x.stats.F).join(' ');
@@ -756,7 +756,7 @@ $('strip').addEventListener('pointerdown', (e) => { if (playing) stop(); setStep
 function setStep(i) {
   cur = Math.max(0, Math.min(steps.length - 1, i));
   const st = steps[cur], s = st.stats;
-  $('stitle').textContent = `${cur + 1} · ${PHASE[st.phase].name}` + (st.cycleStop ? ' · then it cycles, stopped' : '');
+  $('stitle').textContent = `${cur + 1} · ${PHASE[st.phase].name}`;
   [...$('strip').children].forEach((el, j) => { el.classList.toggle('cur', j === cur); el.classList.toggle('past', j <= cur); });
   $('stats').innerHTML = [['edges', edgesOf(st.S)], ['max edge length', fmt(s.maxLen)]]
     .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
@@ -827,11 +827,11 @@ function draw() {
   let ink = 0;
   for (const { F, lifts } of faces) ink += lifts.length * F.hes.reduce((t, h) => t + Math.min(len(h.v), 2 * Rw), 0) * sc * 0.5;
   const dens = Math.max(1, ink * 1.5 * d / (W * H) / 0.25);
-  if (dens > 45) tooDense = true;
+  if (dens > 400) tooDense = true;
   const path = (lifts, P) => { for (const l of lifts) { P.forEach((p, i) => { const s = toS(add(p, l)); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); }); ctx.closePath(); } };
   if (!tooDense) {
     for (const { F, P, lifts } of faces) if (F.region !== 0) { ctx.fillStyle = REGION_COLORS[(F.region - 1) % 6]; ctx.beginPath(); path(lifts, P); ctx.fill(); }
-    ctx.lineWidth = Math.max(0.5, 1.5 / Math.sqrt(dens)) * d; ctx.globalAlpha = Math.max(0.15, 1 / dens);
+    ctx.lineWidth = Math.max(0.5, 1.5 / Math.sqrt(dens)) * d; ctx.globalAlpha = Math.max(0.05, 1 / dens);
     for (const { F, P, lifts } of faces) { ctx.strokeStyle = F.region === 0 ? '#3b4252' : REGION_STROKE[(F.region - 1) % 6]; ctx.beginPath(); path(lifts, P); ctx.stroke(); }
     ctx.globalAlpha = 1;
     if (false) {
