@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intrinsic Delaunay of a flat torus: interactive demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#ffffff; --ink:#1d2433; --ink2:#4a5262; --muted:#8a909c; --line:#e4e1d8; --accent:#2563eb; --path:#c2410c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 Inter, system-ui, sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:26px 22px 40px; }
+  h1 { font:600 26px/1.2 "Source Serif 4", Georgia, serif; margin:0 0 4px; }
+  .sub { color:var(--ink2); margin:0 0 18px; }
+  .bar { display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center; margin-bottom:12px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#fff; }
+  .seg button { border:0; background:transparent; padding:6px 12px; font:500 13px Inter, sans-serif; color:var(--ink2); cursor:pointer; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.on { background:var(--ink); color:#fff; }
+  .ctl { display:flex; align-items:center; gap:8px; color:var(--ink2); font-size:13px; }
+  .ctl input[type=range] { width:130px; accent-color:var(--ink); }
+  .val { font:500 12.5px "JetBrains Mono", monospace; color:var(--ink); min-width:34px; }
+  .btn { border:1px solid var(--line); background:#fff; border-radius:7px; padding:6px 11px; font:500 13px Inter, sans-serif; cursor:pointer; color:var(--ink); }
+  .btn:hover { border-color:#c9c5b8; }
+  .stage { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .cvwrap { position:relative; }
+  canvas#cv { display:block; width:100%; height:min(62vh, 600px); cursor:grab; background:#ffffff; }
+  .tag { position:absolute; left:12px; top:10px; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:7px; padding:6px 10px; }
+  .tag .t { font:600 15px "Source Serif 4", serif; }
+  .tag .d { font-size:12.5px; color:var(--ink2); }
+  .dense { position:absolute; left:12px; bottom:10px; font-size:12px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:4px 9px; border-radius:6px; display:none; }
+  .legend { position:absolute; right:12px; top:10px; background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:7px; padding:5px 10px; font-size:12px; color:var(--ink2); display:flex; flex-direction:column; gap:2px; }
+  .ln { display:inline-block; width:16px; border-top:2.5px solid; vertical-align:3px; margin-right:6px; }
+  .sw { display:inline-block; width:12px; height:9px; border-radius:2px; margin-right:6px; vertical-align:-0.5px; }
+  /* timeline scrubber */
+  .tl { display:flex; align-items:center; gap:12px; padding:10px 14px 12px; border-top:1px solid var(--line); }
+  #play { width:34px; height:34px; border-radius:50%; border:1px solid var(--line); background:#fff; cursor:pointer; font-size:13px; flex:none; }
+  #strip { position:relative; flex:1; height:38px; display:flex; gap:2px; cursor:ew-resize; touch-action:none; user-select:none; }
+  #strip .s { flex:1; border-radius:3px; background:#e9e6dd; position:relative; }
+  #strip .s i { position:absolute; left:0; right:0; bottom:0; border-radius:3px; }
+  #strip .s.cur { outline:2px solid var(--ink); outline-offset:1px; }
+  #strip .s.past i { opacity:1; } #strip .s i { opacity:.45; }
+  .stats { display:flex; gap:26px; padding:0 14px 12px; flex-wrap:wrap; }
+  .stat .k { font-size:11px; color:var(--muted); }
+  .stat .v { font:500 16px "JetBrains Mono", monospace; }
+  details { margin-top:16px; color:var(--ink2); font-size:13px; }
+  details summary { cursor:pointer; color:var(--muted); }
+  details ul { margin:8px 0 0; padding-left:18px; } details li { margin:3px 0; }
+  .err { color:#b91c1c; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bar">
+    <div class="seg" id="presets">
+      <button data-p="rand" class="on">Random triangulation</button>
+      <button data-p="tx">Two skinny triangles</button>
+    </div>
+    <div class="ctl" id="crand">
+      vertices <input type="range" id="nr" min="10" max="300" step="1" value="40"><span class="val" id="nv">40</span>
+      skew <input type="range" id="tr" min="0" max="3" step="0.01" value="0.7"><span class="val" id="tv">5</span>
+      <button class="btn" id="seed">New</button>
+    </div>
+    <div class="ctl" id="ctx" style="display:none">
+      skew <input type="range" id="xr" min="0.1" max="4" step="0.01" value="1.3"><span class="val" id="xv">20</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="cvwrap">
+      <canvas id="cv"></canvas>
+      <div class="tag"><div class="t" id="stitle"></div></div>
+      <div class="dense" id="dense"></div>
+    </div>
+    <div class="tl">
+      <div id="strip"></div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+
+</div>
+
+<script>
+// Core of the demo: the algorithm of Proposition 1.3 (flat surfaces), specialised to flat tori
+// given as translation-surface portalgons, plus Delaunay extraction and baselines.
+// Each half-edge = {o: vertexId, v: [dx,dy]}; a face = {hes:[...], region}; region 0 = active.
+
+const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const mul = (a, s) => [a[0] * s, a[1] * s];
+const neg = (a) => [-a[0], -a[1]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+const len = (a) => Math.hypot(a[0], a[1]);
+
+const rnd = (x) => { const r = Math.sign(x) * Math.round(Math.abs(x) * 1e6); return r === 0 ? 0 : r; };
+const heKey = (o, v) => o + ':' + rnd(v[0]) + ',' + rnd(v[1]);
+const dest = (F, i) => F.hes[(i + 1) % F.hes.length].o;
+const twinKey = (F, i) => heKey(dest(F, i), neg(F.hes[i].v));
+
+function buildIndex(faces) {
+  const m = new Map();
+  faces.forEach((F, f) => F.hes.forEach((h, i) => m.set(heKey(h.o, h.v), { f, i })));
+  return m;
+}
+
+// ---------- lattice helpers (used for N, rendering and analysis only) ----------
+function gaussReduce(b1, b2) {
+  let a = b1, b = b2;
+  if (len(a) > len(b)) [a, b] = [b, a];
+  for (let it = 0; it < 10000; it++) {
+    const k = Math.round(dot(a, b) / dot(a, a));
+    b = sub(b, mul(a, k));
+    if (len(b) < len(a)) [a, b] = [b, a]; else break;
+  }
+  if (cross(a, b) < 0) b = neg(b);
+  return [a, b];
+}
+function reduceIntoCell(p, L) { // put a point into the fundamental parallelogram of L
+  const d = cross(L[0], L[1]);
+  const s = cross(p, L[1]) / d, t = cross(L[0], p) / d;
+  return sub(p, add(mul(L[0], Math.floor(s)), mul(L[1], Math.floor(t))));
+}
+
+// ---------- state ----------
+function makeInput(p, q) {
+  // two triangles (0,p,q) and (p, p+q, q); torus R^2 / <p,q>; one vertex (id 0)
+  if (cross(p, q) < 0) [p, q] = [q, p];
+  const S = { verts: new Map(), faces: [], nextV: 1, nextR: 1, lattice: [p, q] };
+  S.verts.set(0, { pos: [0, 0] });
+  S.faces.push({ region: 0, hes: [{ o: 0, v: p }, { o: 0, v: sub(q, p) }, { o: 0, v: neg(q) }] });
+  S.faces.push({ region: 0, hes: [{ o: 0, v: q }, { o: 0, v: neg(p) }, { o: 0, v: sub(p, q) }] }); // (p, p+q, q), ccw
+  return S;
+}
+function newVertex(S, pos) { const id = S.nextV++; S.verts.set(id, { pos: reduceIntoCell(pos, S.lattice) }); return id; }
+function cloneState(S) {
+  return {
+    verts: new Map([...S.verts].map(([k, v]) => [k, { pos: v.pos.slice() }])),
+    faces: S.faces.map((F) => ({ region: F.region, hes: F.hes.map((h) => ({ o: h.o, v: h.v.slice() })) })),
+    nextV: S.nextV, nextR: S.nextR, lattice: S.lattice,
+  };
+}
+function pruneVertices(S) {
+  const used = new Set(); S.faces.forEach((F) => F.hes.forEach((h) => used.add(h.o)));
+  for (const k of [...S.verts.keys()]) if (!used.has(k)) S.verts.delete(k);
+}
+function signature(S) {
+  return S.faces.map((F) => F.region + '|' + F.hes.map((h) => heKey(h.o, h.v)).sort().join(';')).sort().join('#');
+}
+
+// ---------- polygon geometry ----------
+function coords(F) { const P = [[0, 0]]; for (let i = 0; i < F.hes.length - 1; i++) P.push(add(P[i], F.hes[i].v)); return P; }
+function distPointSeg(p, a, b) {
+  const ab = sub(b, a), t = Math.max(0, Math.min(1, dot(sub(p, a), ab) / dot(ab, ab)));
+  return len(sub(p, add(a, mul(ab, t))));
+}
+function pointInPoly(p, P) {
+  let inside = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const [xi, yi] = P[i], [xj, yj] = P[j];
+    if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function properCross(a, b, c, d, eps) {
+  const o1 = cross(sub(b, a), sub(c, a)), o2 = cross(sub(b, a), sub(d, a));
+  const o3 = cross(sub(d, c), sub(a, c)), o4 = cross(sub(d, c), sub(b, c));
+  return ((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) && ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps));
+}
+// vertex-to-vertex arc test: relative interior inside the open polygon
+function isArc(P, i, j) {
+  const k = P.length;
+  if (i === j || (i + 1) % k === j || (j + 1) % k === i) return false;
+  const A = P[i], B = P[j];
+  const scale = Math.max(1e-300, ...P.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
+  for (let m = 0; m < k; m++) if (m !== i && m !== j && distPointSeg(P[m], A, B) < 2e-15 * scale) return false;
+  for (let m = 0; m < k; m++) {
+    const n = (m + 1) % k;
+    if (m === i || m === j || n === i || n === j) continue;
+    if (properCross(A, B, P[m], P[n], 1e-14 * scale * scale)) return false;
+  }
+  return pointInPoly(mul(add(A, B), 0.5), P);
+}
+function shortcut(F) {
+  const P = coords(F); let best = null;
+  for (let i = 0; i < P.length; i++) for (let j = i + 2; j < P.length; j++) {
+    if (!isArc(P, i, j)) continue;
+    const l = len(sub(P[j], P[i]));
+    if (!best || l < best.l - 1e-12) best = { i, j, l, d: sub(P[j], P[i]) };
+  }
+  return best;
+}
+function splitFace(F, s) {
+  const E = F.hes, { i, j, d } = s;
+  const f1 = { region: F.region, hes: [...E.slice(i, j), { o: E[j].o, v: neg(d) }] };
+  const f2 = { region: F.region, hes: [...E.slice(j), ...E.slice(0, i), { o: E[i].o, v: d.slice() }] };
+  return [f1, f2];
+}
+
+// ---------- routines of Section 4 ----------
+const C = () => ({ insV: 0, insE: 0, delV: 0, redSteps: 0, bifaces: 0 });
+
+function insertVertices(S, cnt) {
+  const idx = buildIndex(S.faces), mid = new Map();
+  for (const F of S.faces) {
+    if (F.region !== 0) continue;
+    const nh = [];
+    F.hes.forEach((h, i) => {
+      const tw = idx.get(twinKey(F, i));
+      if (!tw || S.faces[tw.f].region !== 0) { nh.push(h); return; } // boundary of active region
+      const k1 = heKey(h.o, h.v), k2 = twinKey(F, i), ck = k1 < k2 ? k1 : k2;
+      let m = mid.get(ck);
+      if (m === undefined) { m = newVertex(S, add(S.verts.get(h.o).pos, mul(h.v, 0.5))); mid.set(ck, m); cnt.insV++; }
+      const hv = mul(h.v, 0.5);
+      nh.push({ o: h.o, v: hv }, { o: m, v: hv.slice() });
+    });
+    F.hes = nh;
+  }
+}
+
+function insertEdges(S, cnt) {
+  const out = [];
+  const stack = [...S.faces];
+  while (stack.length) {
+    const F = stack.pop();
+    if (F.region !== 0 || F.hes.length <= 3) { out.push(F); continue; }
+    const s = shortcut(F);
+    if (!s) throw new Error('no vertex-to-vertex arc found');
+    cnt.insE++;
+    stack.push(...splitFace(F, s));
+  }
+  S.faces = out;
+}
+
+function activeVertexInfo(S) {
+  const info = new Map();
+  const get = (v) => { if (!info.has(v)) info.set(v, { deg: 0, loop: false, touchesInactive: false, nbrs: new Set() }); return info.get(v); };
+  const idx = buildIndex(S.faces);
+  S.faces.forEach((F) => F.hes.forEach((h, i) => {
+    const I = get(h.o), d = dest(F, i);
+    if (F.region !== 0) { I.touchesInactive = true; return; }
+    I.deg++;
+    if (d === h.o) I.loop = true; else I.nbrs.add(d);
+    const tw = idx.get(twinKey(F, i));
+    if (!tw || S.faces[tw.f].region !== 0) { I.touchesInactive = true; get(d).touchesInactive = true; }
+  }));
+  return info;
+}
+
+function deleteVertices(S, cnt) {
+  const info = activeVertexInfo(S);
+  const chosen = [];
+  const blocked = new Set();
+  for (const v of [...info.keys()].sort((a, b) => a - b)) {
+    const I = info.get(v);
+    const weak = !I.loop && !I.touchesInactive && I.deg > 0;
+    if (!weak || I.deg > 6 || blocked.has(v)) continue;
+    chosen.push(v); blocked.add(v); I.nbrs.forEach((n) => blocked.add(n));
+  }
+  if (!chosen.length) return;
+  const idx = buildIndex(S.faces);
+  const remove = new Set(), added = [];
+  for (const v of chosen) {
+    const f0 = S.faces.findIndex((F, fi) => F.region === 0 && F.hes.some((h) => h.o === v));
+    const chain = [];
+    let f = f0, guard = 0;
+    do {
+      const F = S.faces[f], k = F.hes.length, c = F.hes.findIndex((h) => h.o === v);
+      for (let t = 1; t <= k - 2; t++) chain.push(F.hes[(c + t) % k]); // from b around to a
+      remove.add(f);
+      const inIdx = (c - 1 + k) % k; // a -> v
+      f = idx.get(twinKey(F, inIdx)).f;
+      if (++guard > 20) throw new Error('star walk failed');
+    } while (f !== f0);
+    added.push({ region: 0, hes: chain.map((h) => ({ o: h.o, v: h.v.slice() })) });
+    cnt.delV++;
+  }
+  S.faces = S.faces.filter((_, i) => !remove.has(i)).concat(added);
+  pruneVertices(S);
+}
+
+// real-RAM friendly rounding of t = <u,w>/<w,w> by doubling + halving (Lemma A.1 flavour)
+function reduceMod(u, w, cnt) {
+  const t = dot(u, w) / dot(w, w), s = t < 0 ? -1 : 1, a = Math.abs(t);
+  let k = 0, steps = 0;
+  if (a > 0.5) {
+    let pw = 1; while (pw * 2 <= a) { pw *= 2; steps++; }
+    let rem = a;
+    for (; pw >= 1; pw /= 2) { if (rem >= pw) { rem -= pw; k += pw; } steps++; }
+    if (rem > 0.5) k += 1;
+    steps++;
+  }
+  cnt.redSteps += steps; cnt.bifaces++;
+  return sub(u, mul(w, s * k));
+}
+
+// good biface of a flat annulus bounded by loops at p (vector w) and q, crossing vector u (p -> q)
+function goodBiface(p, q, w, u, cnt) {
+  const ur = reduceMod(u, w, cnt);
+  const wp = cross(w, ur) > 0 ? w : neg(w);
+  const f1 = add(wp, ur), f2 = sub(ur, wp);
+  let faces;
+  if (len(f1) <= len(f2)) faces = [
+    [{ o: p, v: wp }, { o: p, v: ur }, { o: q, v: neg(f1) }],
+    [{ o: p, v: f1 }, { o: q, v: neg(wp) }, { o: q, v: neg(ur) }]];
+  else faces = [
+    [{ o: p, v: wp }, { o: p, v: f2 }, { o: q, v: neg(ur) }],
+    [{ o: p, v: ur }, { o: q, v: neg(wp) }, { o: q, v: neg(f2) }]];
+  const interior = Math.min(len(ur), len(f1), len(f2));
+  return { faces, thin: interior > len(w) * (1 + 1e-9), e: ur, f: len(f1) <= len(f2) ? f1 : f2, w: wp };
+}
+
+// dual components of a set of faces, not crossing half-edges whose key is in `cut`
+function components(S, faceSet, cut) {
+  const idx = buildIndex(S.faces), seen = new Set(), comps = [];
+  for (const f0 of faceSet) {
+    if (seen.has(f0)) continue;
+    const comp = [], st = [f0]; seen.add(f0);
+    while (st.length) {
+      const f = st.pop(); comp.push(f);
+      const F = S.faces[f];
+      F.hes.forEach((h, i) => {
+        if (cut && cut.has(heKey(h.o, h.v))) return;
+        const tw = idx.get(twinKey(F, i));
+        if (tw && faceSet.has(tw.f) && !seen.has(tw.f)) { seen.add(tw.f); st.push(tw.f); }
+      });
+    }
+    comps.push(comp);
+  }
+  return comps;
+}
+
+// is this component a tube? boundary = half-edges whose twin is outside the component (or cut)
+function tubeData(S, comp, cut) {
+  const idx = buildIndex(S.faces), inC = new Set(comp);
+  const bnd = [], V = new Set(); let he = 0;
+  for (const f of comp) {
+    const F = S.faces[f];
+    F.hes.forEach((h, i) => {
+      V.add(h.o); he++;
+      const tw = idx.get(twinKey(F, i));
+      if ((cut && cut.has(heKey(h.o, h.v))) || !tw || !inC.has(tw.f)) bnd.push({ h, d: dest(F, i) });
+    });
+  }
+  const E = (he - bnd.length) / 2 + bnd.length;
+  const chi = V.size - E + comp.length;
+  if (bnd.length !== 2 || chi !== 0) return null;
+  if (bnd.some((b) => b.d !== b.h.o) || bnd[0].h.o === bnd[1].h.o) return null;
+  return { p: bnd[0].h.o, q: bnd[1].h.o, w: bnd[0].h.v };
+}
+
+function crossingVector(S, comp, p, q) {
+  const disp = new Map([[p, [0, 0]]]), queue = [p];
+  const adj = new Map();
+  for (const f of comp) { const F = S.faces[f]; F.hes.forEach((h, i) => { if (!adj.has(h.o)) adj.set(h.o, []); adj.get(h.o).push({ d: dest(F, i), v: h.v }); }); }
+  while (queue.length) {
+    const x = queue.shift();
+    for (const { d, v } of adj.get(x) || []) if (!disp.has(d)) { disp.set(d, add(disp.get(x), v)); queue.push(d); }
+  }
+  return disp.get(q);
+}
+
+function replaceTube(S, comp, td, markInactive, cnt, log) {
+  const u = crossingVector(S, comp, td.p, td.q);
+  const B = goodBiface(td.p, td.q, td.w, u, cnt);
+  const region = markInactive || B.thin ? S.nextR++ : 0;
+  const drop = new Set(comp);
+  const nInterior = new Set(comp.flatMap((f) => S.faces[f].hes.map((h) => h.o))).size - 2;
+  S.faces = S.faces.filter((_, i) => !drop.has(i)).concat(B.faces.map((hes) => ({ region, hes })));
+  pruneVertices(S);
+  log.push(`${B.thin ? 'thin' : 'thick'} good biface (${nInterior} interior vertices removed)${region ? ', marked inactive' : ''}`);
+  return B;
+}
+
+function gardening(S, cnt, log) {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const act = new Set(S.faces.map((F, i) => (F.region === 0 ? i : -1)).filter((i) => i >= 0));
+    if (!act.size) return;
+    for (const comp of components(S, act, null)) {
+      const td = tubeData(S, comp, null);
+      if (td) { replaceTube(S, comp, td, true, cnt, log); changed = true; break; }
+    }
+  }
+}
+
+function simplifyTubes(S, cnt, log) {
+  if (!S.faces.length || S.faces.some((F) => F.region !== 0)) return; // case (b) never arises on a torus here
+  // case (a): S(T) is a torus. J = two disjoint loop edges, if they exist.
+  const loops = new Map();
+  S.faces.forEach((F) => F.hes.forEach((h, i) => {
+    if (dest(F, i) === h.o) { const L = loops.get(h.o); if (!L || len(h.v) < len(L.v)) loops.set(h.o, h); }
+  }));
+  if (loops.size < 2) return;
+  const [L1, L2] = [...loops.values()].sort((a, b) => len(a.v) - len(b.v));
+  const cut = new Set([heKey(L1.o, L1.v), heKey(L1.o, neg(L1.v)), heKey(L2.o, L2.v), heKey(L2.o, neg(L2.v))]);
+  const all = new Set(S.faces.map((_, i) => i));
+  const comps = components(S, all, cut);
+  const tubes = comps.map((c) => ({ c, td: tubeData(S, c, cut) })).filter((x) => x.td);
+  if (!tubes.length) return;
+  // replace both tubes at once (face indices are invalidated by replacement)
+  const newFaces = [], drop = new Set();
+  for (const { c, td } of tubes) {
+    const u = crossingVector(S, c, td.p, td.q);
+    // the two loops of J are disjoint, hence parallel: use one common vector w for both tubes
+    const B = goodBiface(td.p, td.q, L1.v, u, cnt);
+    const region = B.thin ? S.nextR++ : 0;
+    const nInt = new Set(c.flatMap((f) => S.faces[f].hes.map((h) => h.o))).size - 2;
+    c.forEach((f) => drop.add(f));
+    B.faces.forEach((hes) => newFaces.push({ region, hes }));
+    log.push(`tube → ${B.thin ? 'thin' : 'thick'} good biface (${nInt} interior vertices removed)${region ? ', marked inactive' : ''}`);
+  }
+  S.faces = S.faces.filter((_, i) => !drop.has(i)).concat(newFaces);
+  pruneVertices(S);
+}
+
+function validate(S) {
+  const idx = buildIndex(S.faces);
+  S.faces.forEach((F) => {
+    const s = F.hes.reduce((a, h) => add(a, h.v), [0, 0]);
+    if (len(s) > 1e-6 * (1 + F.hes.reduce((m, h) => Math.max(m, len(h.v)), 0))) throw new Error('face not closed');
+    F.hes.forEach((h, i) => { if (!idx.has(twinKey(F, i))) throw new Error('missing twin ' + twinKey(F, i)); });
+  });
+}
+
+// ---------- stats ----------
+function dirichletVertices(L) {
+  const [a, b0] = gaussReduce(L[0], L[1]);
+  const b = b0, c = dot(a, b) > 0 ? sub(b, a) : add(a, b);
+  const nb = [a, b, c, neg(a), neg(b), neg(c)].sort((x, y) => Math.atan2(x[1], x[0]) - Math.atan2(y[1], y[0]));
+  const cc = (P, Q) => { const d = 2 * cross(P, Q); return [(Q[1] * dot(P, P) - P[1] * dot(Q, Q)) / d, (P[0] * dot(Q, Q) - Q[0] * dot(P, P)) / d]; };
+  return nb.map((n, i) => mul(cc(n, nb[(i + 1) % 6]), 0.999));
+}
+function stats(S) {
+  const det = Math.abs(cross(S.lattice[0], S.lattice[1]));
+  const D = dirichletVertices(S.lattice);
+  let maxLen = 0, maxH = 0, longest = null;
+  S.faces.forEach((F) => F.hes.forEach((h) => {
+    const l = len(h.v);
+    if (l > maxLen) { maxLen = l; longest = h.v; }
+    const c = Math.max(...D.map((d) => Math.abs(cross(d, h.v))));
+    maxH = Math.max(maxH, Math.ceil(c / det - 1e-9));
+  }));
+  return {
+    V: S.verts.size, F: S.faces.length, active: S.faces.filter((F) => F.region === 0).length,
+    maxLen, happiness: maxH, longest,
+  };
+}
+
+// ---------- the Algorithm ----------
+function runAlgorithm(p, q, opts = {}) { return runAlgorithmFrom(makeInput(p, q), opts); }
+function runAlgorithmFrom(S0, opts = {}) {
+  const S = cloneState(S0);
+  const cnt = C();
+  const steps = [];
+  const snap = (title, detail, phase) => steps.push({ title, detail, phase, S: cloneState(S), stats: stats(S), cnt: { ...cnt } });
+  const [r1] = gaussReduce(S.lattice[0], S.lattice[1]);
+  const sys = len(r1);
+  const Lmax = Math.max(...S.faces.flatMap((F) => F.hes.map((h) => len(h.v))));
+  const N = Math.ceil(Math.log2(2 + Lmax / (0.99 * sys)));
+  snap('Input portalgon T', `${S.faces.length} triangles, ${S.verts.size} vertex${S.verts.size > 1 ? 'es' : ''}. Longest side L = ${fmt(Lmax)}; N = ⌈log(2 + L/s)⌉ = ${N} main iterations at most.`, 'input');
+  let mainDone = 0;
+  for (let it = 1; it <= N; it++) {
+    if (!S.faces.some((F) => F.region === 0)) break;
+    mainDone = it;
+    let a = cnt.insV; insertVertices(S, cnt); validate(S);
+    snap(`Iteration ${it} · InsertVertices`, `Inserted the middle points of ${cnt.insV - a} interior edges as vertices.`, 'insV');
+    a = cnt.insE; insertEdges(S, cnt); validate(S);
+    snap(`Iteration ${it} · InsertEdges`, `Cut every non-triangular face along shortcuts: ${cnt.insE - a} edges inserted.`, 'insE');
+    let inner = 0;
+    for (let k = 1; k <= 350; k++) {
+      inner = k;
+      const sig0 = signature(S);
+      const log = [];
+      gardening(S, cnt, log); simplifyTubes(S, cnt, log); gardening(S, cnt, log); validate(S);
+      const sigT = signature(S);
+      if (sigT !== sig0) snap(`Iteration ${it}.${k} · SimplifyTubes + Gardening`, log.join('; ') + '.', 'tubes');
+      const d0 = cnt.delV; deleteVertices(S, cnt); validate(S);
+      if (cnt.delV > d0) snap(`Iteration ${it}.${k} · DeleteVertices`, `Deleted an independent set of ${cnt.delV - d0} weak vertices of degree ≤ 6.`, 'delV');
+      const e0 = cnt.insE; insertEdges(S, cnt); validate(S);
+      if (cnt.insE > e0) snap(`Iteration ${it}.${k} · InsertEdges`, `Re-triangulated the merged faces with ${cnt.insE - e0} shortcuts.`, 'retri');
+      if (signature(S) === sig0) break; // fixed point: the remaining inner iterations are no-ops
+    }
+    steps[steps.length - 1].innerNote = inner;
+    if (!S.faces.some((F) => F.region === 0)) { snap(`Iteration ${it} · active region empty`, 'Every face now belongs to an inactive good biface; the remaining iterations do nothing.', 'done'); break; }
+  }
+  const R = cloneState(S);
+  const del = delaunayByUnfolding(R, opts.maxTri || 400000);
+  return { steps, N, mainDone, cnt, R, del, sys, Lmax };
+}
+
+// ---------- Delaunay tessellation from a portalgon of low happiness (simplified Prop. 1.5) ----------
+// Unfold triangles around a vertex p until the lifts of p within a disk certify the two successive minima.
+function delaunayByUnfolding(S, maxTri) {
+  const idx = buildIndex(S.faces);
+  const p = S.faces[0].hes[0].o;
+  const triDist = (P) => {
+    if (pointInPoly([0, 0], P)) return 0;
+    let d = Infinity; for (let i = 0; i < P.length; i++) d = Math.min(d, distPointSeg([0, 0], P[i], P[(i + 1) % P.length]));
+    return d;
+  };
+  let rho = 1e-9, visited = 0, a = null, b = null;
+  for (let round = 0; round < 80; round++) {
+    const pts = new Map(), seen = new Set(), queue = [];
+    const push = (f, base) => {
+      const k = f + '@' + rnd(base[0]) + ',' + rnd(base[1]);
+      if (seen.has(k)) return; seen.add(k);
+      const P = coords(S.faces[f]).map((c) => add(c, base));
+      if (triDist(P) > rho) return;
+      queue.push({ f, base, P });
+    };
+    const F0 = S.faces[0];
+    push(0, [0, 0]);
+    visited = 0;
+    while (queue.length) {
+      const { f, P } = queue.shift();
+      if (++visited > maxTri) return { aborted: true, visited };
+      const F = S.faces[f];
+      F.hes.forEach((h, i) => {
+        if (h.o === p) { const x = P[i]; if (len(x) > 1e-9) pts.set(rnd(x[0]) + ',' + rnd(x[1]), x); }
+        const tw = idx.get(twinKey(F, i));
+        const G = S.faces[tw.f], cg = coords(G);
+        push(tw.f, sub(P[(i + 1) % F.hes.length], cg[tw.i]));
+      });
+    }
+    const arr = [...pts.values()].sort((x, y) => len(x) - len(y));
+    a = arr[0] || null; b = null;
+    if (a) for (const x of arr) if (Math.abs(cross(a, x)) > 1e-9 * len(a) * len(x)) { b = x; break; }
+    if (a && b && rho >= len(b) * (1 + 1e-9)) break;
+    rho = Math.max(rho * 2, b ? len(b) * 1.0001 : (a ? len(a) * 2 : 1e-3 * 2 ** round));
+    if (rho < 1e-6) rho = 1e-6 * 2 ** round;
+  }
+  if (cross(a, b) < 0) b = neg(b);
+  const ab = dot(a, b), tol = 1e-9 * len(a) * len(b);
+  let faces, apex, kind;
+  if (Math.abs(ab) <= tol) {
+    kind = 'rectangle'; apex = null;
+    faces = [{ region: 0, hes: [{ o: 0, v: a }, { o: 0, v: b }, { o: 0, v: neg(a) }, { o: 0, v: neg(b) }] }];
+  } else if (ab > 0) {
+    kind = 'triangles'; apex = b;
+    faces = [{ region: 0, hes: [{ o: 0, v: a }, { o: 0, v: sub(b, a) }, { o: 0, v: neg(b) }] },
+             { region: 0, hes: [{ o: 0, v: b }, { o: 0, v: neg(a) }, { o: 0, v: sub(a, b) }] }];
+  } else {
+    kind = 'triangles'; apex = add(a, b);
+    faces = [{ region: 0, hes: [{ o: 0, v: a }, { o: 0, v: b }, { o: 0, v: neg(add(a, b)) }] },
+             { region: 0, hes: [{ o: 0, v: add(a, b) }, { o: 0, v: neg(a) }, { o: 0, v: neg(b) }] }];
+  }
+  // on a flat torus the single vertex of D can sit anywhere: put it at the origin
+  const D = { verts: new Map([[0, { pos: [0, 0] }]]), faces, nextV: 1, nextR: 1, lattice: S.lattice };
+  const u = apex ? dot(apex, a) / len(a) : 0;
+  return { a, b, kind, D, visited, u };
+}
+
+// ---------- baseline: Lawson flips on the one-vertex input triangulation ----------
+function flipCount(p, q, cap = 2e7) {
+  let A = p, B = sub(q, p), Cc = neg(q); // superbase A + B + C = 0
+  let flips = 0;
+  for (; flips < cap; flips++) {
+    if (dot(A, B) > 1e-12 * len(A) * len(B)) { [A, B, Cc] = [A, neg(B), sub(B, A)]; continue; }
+    if (dot(B, Cc) > 1e-12 * len(B) * len(Cc)) { [A, B, Cc] = [B, neg(Cc), sub(Cc, B)]; continue; }
+    if (dot(Cc, A) > 1e-12 * len(Cc) * len(A)) { [A, B, Cc] = [Cc, neg(A), sub(A, Cc)]; continue; }
+    break;
+  }
+  return flips;
+}
+
+function fmt(x) { if (!isFinite(x)) return '∞'; if (Math.abs(x) < 1e-9) return '0'; const a = Math.abs(x); if (a >= 1e5 || (a < 1e-3 && a > 0)) return x.toExponential(2); return (Math.round(x * 1000) / 1000).toString(); }
+
+
+// ---------- random input triangulations ----------
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const area2 = (F) => { const P = coords(F); return cross(sub(P[1], P[0]), sub(P[2], P[0])); };
+
+// index: key -> {F (face object), i}
+function objIndex(faces) { const m = new Map(); for (const F of faces) F.hes.forEach((h, i) => m.set(heKey(h.o, h.v), { F, i })); return m; }
+function reindex(m, F) { F.hes.forEach((h, i) => m.set(heKey(h.o, h.v), { F, i })); }
+
+// Flip the edge of half-edge i of F if its quadrilateral is strictly convex. Returns the new edge vector or null.
+function tryFlip(S, idx, F, i, accept) {
+  const tw = idx.get(twinKey(F, i)); if (!tw || tw.F === F) return null;
+  const G = tw.F, j = tw.i;
+  const h = F.hes[i], e1 = F.hes[(i + 1) % 3], e2 = F.hes[(i + 2) % 3];
+  const t = G.hes[j], g1 = G.hes[(j + 1) % 3], g2 = G.hes[(j + 2) % 3];
+  // a = h.o at 0, b = h.v, c = b + e1.v, d = g1.v (from a)
+  const b = h.v, c = add(b, e1.v), d = g1.v;
+  const s1 = cross(d, c), s2 = cross(sub(b, d), sub(c, d)); // areas of (a,d,c) and (d,b,c)
+  const sc = Math.max(len(b), len(c), len(d)) ** 2;
+  if (s1 <= 1e-14 * sc || s2 <= 1e-14 * sc) return null;
+  const dc = sub(c, d);
+  if (accept && !accept(dc, h.v, Math.min(s1, s2))) return null;
+  const cId = e2.o, dId = g2.o;
+  [h, t].forEach((x) => { idx.delete(heKey(x.o, x.v)); });
+  F.hes = [g1, { o: dId, v: dc }, e2];
+  G.hes = [e1, { o: cId, v: neg(dc) }, g2];
+  reindex(idx, F); reindex(idx, G);
+  return dc;
+}
+
+// nVerts random vertices in a torus R^2/<p, q0>, starting from the two-triangle portalgon of the
+// skewed basis (p, q0 + twist*p) of the same lattice, then `scramble` random flips per vertex.
+function randomTriangulation(nVerts, scramble, seed, twist = 0) {
+  const rng = mulberry32(seed);
+  const p = [10, 0], q = add([3.7, 9.3], mul(p, twist));
+  const S = makeInput(p, q);
+  for (let k = 1; k < nVerts; k++) {
+    // pick a face proportionally to area, then a well-inside point
+    const areas = S.faces.map(area2), tot = areas.reduce((a, b) => a + b, 0);
+    let r = rng() * tot, f = 0; while (r > areas[f] && f < areas.length - 1) r -= areas[f++];
+    const F = S.faces[f], P = coords(F);
+    let u, v; do { u = rng(); v = rng(); } while (u + v > 1 || u < 0.05 || v < 0.05 || 1 - u - v < 0.05);
+    const X = add(add(mul(P[0], 1 - u - v), mul(P[1], u)), mul(P[2], v));
+    const x = newVertex(S, add(S.verts.get(F.hes[0].o).pos, X));
+    const o = F.hes.map((h) => h.o);
+    const tris = [0, 1, 2].map((i) => {
+      const A = P[i], B = P[(i + 1) % 3];
+      return { region: 0, hes: [{ o: o[i], v: sub(B, A) }, { o: o[(i + 1) % 3], v: sub(X, B) }, { o: x, v: sub(A, X) }] };
+    });
+    S.faces.splice(f, 1, ...tris);
+  }
+  // scramble with random flips, biased towards lengthening edges, to get long skinny triangles
+  const idx = objIndex(S.faces), cap = 4 * Math.max(len(p), len(q));
+  const nFlips = Math.round(scramble * nVerts);
+  const minArea2 = 0.2 * Math.abs(cross(p, q)) / S.faces.length; // keep every triangle reasonably fat in area
+  let done = 0;
+  for (let t = 0; t < nFlips * 6 && done < nFlips; t++) {
+    const F = S.faces[Math.floor(rng() * S.faces.length)], i = Math.floor(rng() * 3);
+    const res = tryFlip(S, idx, F, i, (nv, ov, a2) => a2 >= minArea2 && a2 >= 1e-10 * dot(nv, nv) && len(nv) < cap && (len(nv) > len(ov) ? rng() < 0.9 : rng() < 0.25));
+    if (res) done++;
+  }
+  validate(S);
+  return S;
+}
+
+// Lawson's flip algorithm on a given triangulation (Delaunay w.r.t. its own vertex set)
+function lawsonFlips(S0, cap = 300000) {
+  const S = cloneState(S0), idx = objIndex(S.faces);
+  const angle = (u, v) => Math.atan2(Math.abs(cross(u, v)), dot(u, v));
+  const stack = []; for (const F of S.faces) for (let i = 0; i < 3; i++) stack.push([F, i]);
+  let flips = 0, refused = 0;
+  while (stack.length) {
+    const [F, i] = stack.pop();
+    const h = F.hes[i]; if (!h) continue;
+    const tw = idx.get(twinKey(F, i)); if (!tw || tw.F === F) continue;
+    const G = tw.F, j = tw.i;
+    const b = h.v, c = add(b, F.hes[(i + 1) % 3].v), d = G.hes[(j + 1) % 3].v;
+    const al = angle(sub([0, 0], c), sub(b, c)), be = angle(sub(b, d), sub([0, 0], d));
+    if (al + be <= Math.PI + 1e-10) continue;
+    if (!tryFlip(S, idx, F, i, null)) { refused++; continue; }
+    if (++flips > cap) return { flips, aborted: true };
+    for (let k = 0; k < 3; k++) { stack.push([F, k]); stack.push([G, k]); }
+  }
+  return { flips, aborted: false, refused, S };
+}
+
+const Core = { randomTriangulation, runAlgorithmFrom, lawsonFlips, add, sub, mul, neg, dot, cross, len, gaussReduce, reduceIntoCell, runAlgorithm, flipCount, delaunayByUnfolding, makeInput, stats, coords, fmt, dirichletVertices, heKey, buildIndex };
+if (typeof module !== 'undefined') module.exports = Core;
+
+</script>
+<script>
+(() => {
+const { randomTriangulation, runAlgorithmFrom, lawsonFlips, add, sub, mul, neg, dot, cross, len, gaussReduce, makeInput, stats, coords, fmt, dirichletVertices, heKey } = Core;
+const $ = (id) => document.getElementById(id);
+const REGION_COLORS = ['#cfe8e2', '#f6dfc0', '#ddd3f0', '#f4d0d6', '#d6e4f5', '#e6edc7'];
+const REGION_STROKE = ['#2f7f6f', '#a8661a', '#6b4fb0', '#b0475c', '#3a679e', '#6b7d22'];
+const PHASE = {
+  input:    { name: 'Input',                       col: '#9aa0ab' },
+  insV:     { name: 'Split every edge in half',    col: '#2563eb' },
+  insE:     { name: 'Cut faces along shortest diagonals', col: '#60a5fa' },
+  tubes:    { name: 'Collapse cylinders',          col: '#0f9f84' },
+  delV:     { name: 'Remove vertices',             col: '#d97706' },
+  retri:    { name: 'Cut faces along shortest diagonals',              col: '#f2b866' },
+  done:     { name: 'Done',                        col: '#0f9f84' },
+  delaunay: { name: 'Delaunay triangulation',      col: '#1d2433' },
+};
+
+let preset = 'rand', seed = 12345, run = null, steps = [], cur = 0, playing = null;
+let view = { cx: 0, cy: 0, R: 4, R0: 4 }, info = {};
+
+const skew = () => { const t = +$('tr').value; return Math.round(10 ** t) - 1; };
+const xval = () => +(10 ** +$('xr').value).toPrecision(4) + 0.37;
+
+function compute() {
+  let S0;
+  try {
+    S0 = preset === 'rand' ? randomTriangulation(+$('nr').value, 2, seed, skew()) : makeInput([1, 0], [xval(), 2]);
+    run = runAlgorithmFrom(S0);
+  } catch (e) { $('stitle').innerHTML = '<span class="err">Run failed: ' + e.message + '</span>'; return; }
+  steps = run.steps.slice();
+  steps.push({ phase: 'delaunay', S: run.del.D, stats: stats(run.del.D), cnt: run.cnt });
+  const [a, b] = gaussReduce(S0.lattice[0], S0.lattice[1]);
+  const R = preset === 'rand' ? 0.95 * len(b) : Math.max(2.2 * Math.sqrt(Math.abs(cross(a, b))), 1.3 * len(b));
+  const mid = mul(add(a, b), 0.5);
+  view = { cx: mid[0], cy: mid[1], R, R0: R };
+  buildStrip();
+  const c = run.cnt;
+  setStep(0);
+}
+
+const edgesOf = (S) => S.faces.reduce((t, F) => t + F.hes.length, 0) / 2;
+// short description of a step, from what changed
+function describe(i) {
+  const E = edgesOf(steps[i].S);
+  if (i === 0 || steps[i].phase === 'delaunay' || steps[i].phase === 'done') return `${E} edges`;
+  const dE = E - edgesOf(steps[i - 1].S);
+  return `${dE > 0 ? '+' : dE < 0 ? '−' : '±'}${Math.abs(dE)} edges → ${E}`;
+  const st = steps[i], prev = steps[i - 1];
+  const s = st.stats;
+  if (st.phase === 'input') return `${s.V} vertices · ${s.F} triangles`;
+  if (st.phase === 'delaunay') return `1 vertex · ${s.F === 1 ? '1 rectangle' : '2 triangles'}`;
+  if (st.phase === 'done') return 'everything is frozen';
+  const dv = s.V - prev.stats.V;
+  if (st.phase === 'retri') return `+${st.cnt.insE - prev.cnt.insE} edges · ${s.F} triangles`;
+  if (st.phase === 'insE') return `+${st.cnt.insE - prev.cnt.insE} edges`;
+  if (dv > 0) return `+${dv} vertices`;
+  return `${dv < 0 ? '−' + -dv : 'no'} vertices removed · ${s.V} left · ${s.F} faces`;
+}
+
+// ---------- timeline strip (hover to scrub) ----------
+function buildStrip() {
+  const strip = $('strip');
+  const E = steps.map((s) => edgesOf(s.S)), maxE = Math.max(...E);
+  strip.innerHTML = steps.map((s, i) => {
+    const h = 100;
+    return `<div class="s" data-i="${i}"><i style="height:${h}%;background:${PHASE[s.phase].col}"></i></div>`;
+  }).join('');
+}
+function stepAt(e) {
+  const r = $('strip').getBoundingClientRect();
+  return Math.floor(Math.max(0, Math.min(0.9999, (e.clientX - r.left) / r.width)) * steps.length);
+}
+$('strip').addEventListener('pointermove', (e) => { if (playing) stop(); setStep(stepAt(e)); });
+$('strip').addEventListener('pointerdown', (e) => { if (playing) stop(); setStep(stepAt(e)); });
+
+function setStep(i) {
+  cur = Math.max(0, Math.min(steps.length - 1, i));
+  const st = steps[cur], s = st.stats;
+  $('stitle').textContent = `${cur + 1} · ${PHASE[st.phase].name}`;
+  [...$('strip').children].forEach((el, j) => { el.classList.toggle('cur', j === cur); el.classList.toggle('past', j <= cur); });
+  const c = st.cnt, ops = c.insV + c.insE + c.delV + c.redSteps + (st.phase === 'delaunay' ? run.del.visited : 0);
+  $('stats').innerHTML = [['edges', edgesOf(st.S)], ['max edge length', fmt(s.maxLen)]]
+    .map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  draw();
+}
+function stop() { clearInterval(playing); playing = null; }
+if ($('play')) $('play').onclick = () => {
+  if (playing) return stop();
+  if (cur >= steps.length - 1) setStep(0);
+  $('play').textContent = '❚❚';
+  playing = setInterval(() => { if (cur >= steps.length - 1) return stop(); setStep(cur + 1); }, 700);
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') setStep(cur + 1); if (e.key === 'ArrowLeft') setStep(cur - 1); });
+
+// ---------- lattice enumeration ----------
+let LB = null;
+function disk(c, rho, out) {
+  const [a, b] = LB, det = cross(a, b), aa = dot(a, a), la = Math.sqrt(aa), hb = det / la;
+  const beta = cross(a, c) / det;
+  for (let j = Math.ceil(-beta - rho / hb - 1e-9); j <= Math.floor(-beta + rho / hb + 1e-9); j++) {
+    const p = add(c, mul(b, j)), i0 = -dot(p, a) / aa, ir = rho / la;
+    for (let i = Math.ceil(i0 - ir - 1e-9); i <= Math.floor(i0 + ir + 1e-9); i++) {
+      const q = add(p, mul(a, i));
+      if (q[0] * q[0] + q[1] * q[1] <= rho * rho) out(i, j);
+    }
+  }
+}
+function liftsOfSegs(segs, C, R, cap) {
+  const set = new Map();
+  for (const [P, v] of segs) {
+    const L = len(v), n = Math.max(1, Math.ceil(L / R)), rho = R + L / (2 * n) + 1e-9;
+    for (let k = 0; k <= n; k++) {
+      disk(sub(add(P, mul(v, k / n)), C), rho, (i, j) => { const key = i * 1e7 + j; if (!set.has(key)) set.set(key, [i, j]); });
+      if (set.size > cap) return null;
+    }
+  }
+  return [...set.values()].map(([i, j]) => add(mul(LB[0], i), mul(LB[1], j)));
+}
+function edgeKeys(S) {
+  const s = new Set();
+  S.faces.forEach((F) => F.hes.forEach((h, i) => { const d = F.hes[(i + 1) % F.hes.length].o, k1 = heKey(h.o, h.v), k2 = heKey(d, neg(h.v)); s.add(k1 < k2 ? k1 : k2); }));
+  return s;
+}
+
+// ---------- canvas ----------
+const cv = $('cv'), ctx = cv.getContext('2d');
+function resize() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = r.width * d; cv.height = r.height * d; draw(); }
+function draw() {
+  if (!steps.length) return;
+  const st = steps[cur], S = st.S, prev = cur > 0 && st.phase !== 'delaunay' ? steps[cur - 1].S : null;
+  LB = gaussReduce(S.lattice[0], S.lattice[1]);
+  const det = Math.abs(cross(LB[0], LB[1]));
+  const W = cv.width, H = cv.height, d = devicePixelRatio || 1;
+  const sc = Math.min(W, H) / (2 * view.R), Rw = Math.hypot(W, H) / 2 / sc, C = [view.cx, view.cy];
+  const toS = (p) => [W / 2 + (p[0] - C[0]) * sc, H / 2 - (p[1] - C[1]) * sc];
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  let est = 0;
+  for (const F of S.faces) est += (F.hes.reduce((t, h) => t + len(h.v), 0) * Rw + Math.PI * Rw * Rw) / det;
+  let tooDense = est > 250000;
+  const faces = [];
+  if (!tooDense) for (const F of S.faces) {
+    const base = S.verts.get(F.hes[0].o).pos, P = coords(F).map((c) => add(c, base));
+    const lifts = liftsOfSegs(F.hes.map((h, i) => [P[i], h.v]), C, Rw, 40000);
+    if (!lifts) { tooDense = true; break; }
+    faces.push({ F, P, lifts });
+  }
+  let ink = 0;
+  for (const { F, lifts } of faces) ink += lifts.length * F.hes.reduce((t, h) => t + Math.min(len(h.v), 2 * Rw), 0) * sc * 0.5;
+  const dens = Math.max(1, ink * 1.5 * d / (W * H) / 0.25);
+  if (dens > 45) tooDense = true;
+  const path = (lifts, P) => { for (const l of lifts) { P.forEach((p, i) => { const s = toS(add(p, l)); i ? ctx.lineTo(s[0], s[1]) : ctx.moveTo(s[0], s[1]); }); ctx.closePath(); } };
+  if (!tooDense) {
+    for (const { F, P, lifts } of faces) if (F.region !== 0) { ctx.fillStyle = REGION_COLORS[(F.region - 1) % 6]; ctx.beginPath(); path(lifts, P); ctx.fill(); }
+    ctx.lineWidth = Math.max(0.5, 1.5 / Math.sqrt(dens)) * d; ctx.globalAlpha = Math.max(0.15, 1 / dens);
+    for (const { F, P, lifts } of faces) { ctx.strokeStyle = F.region === 0 ? '#3b4252' : REGION_STROKE[(F.region - 1) % 6]; ctx.beginPath(); path(lifts, P); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    if (false) {
+      const old = edgeKeys(prev);
+      ctx.strokeStyle = '#2563eb'; ctx.lineWidth = Math.max(0.9, 2.4 / Math.sqrt(dens)) * d; ctx.beginPath();
+      for (const { F, P, lifts } of faces) F.hes.forEach((h, i) => {
+        const dd = F.hes[(i + 1) % F.hes.length].o, k1 = heKey(h.o, h.v), k2 = heKey(dd, neg(h.v));
+        if (old.has(k1 < k2 ? k1 : k2)) return;
+        for (const l of lifts) { const a = toS(add(P[i], l)), b = toS(add(add(P[i], h.v), l)); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+      });
+      ctx.stroke();
+    }
+  }
+  // boundary of a fundamental domain (spanned by the two shortest translations)
+  {
+    const [fa, fb] = LB, Q = [[0, 0], fa, add(fa, fb), fb].map(toS);
+    ctx.save();
+    ctx.lineWidth = 2.2 * d; ctx.strokeStyle = '#c2410c'; ctx.setLineDash([7 * d, 5 * d]);
+    ctx.beginPath(); Q.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.stroke();
+    ctx.restore();
+  }
+  // vertices
+  ctx.fillStyle = '#1d2433';
+  const r = Math.max(1.6, Math.min(4, sc * 0.05)) * d;
+  ctx.beginPath();
+  for (const [, v] of S.verts) for (const l of liftsOfSegs([[v.pos, [0, 0]]], C, Rw, 20000) || []) { const s = toS(add(v.pos, l)); ctx.moveTo(s[0] + r, s[1]); ctx.arc(s[0], s[1], r, 0, 7); }
+  ctx.fill();
+  // a shortest path crossing the longest edge many times
+  const e = null;
+  if (e) {
+    let best = null; for (const x of dirichletVertices(S.lattice)) if (!best || Math.abs(cross(x, e)) > Math.abs(cross(best, e))) best = x;
+    const c0 = add(C, [view.R * 0.071, view.R * 0.043]), A = sub(c0, mul(best, 0.5)), B = add(c0, mul(best, 0.5));
+    let seg = null;
+    for (const F of S.faces) { const P = coords(F).map((c) => add(c, S.verts.get(F.hes[0].o).pos)); F.hes.forEach((h, i) => { if (!seg && Math.abs(len(h.v) - len(e)) < 1e-9 * len(e)) seg = { P: P[i], v: h.v }; }); }
+    const pts = [];
+    const lifts = seg && liftsOfSegs([[seg.P, seg.v]], c0, len(best) / 2 + 1e-9, 300000);
+    if (lifts) for (const l of lifts) {
+      const p = add(seg.P, l), q = add(p, seg.v);
+      const d1 = cross(sub(B, A), sub(p, A)), d2 = cross(sub(B, A), sub(q, A)), d3 = cross(sub(q, p), sub(A, p)), d4 = cross(sub(q, p), sub(B, p));
+      if (d1 * d2 < 0 && d3 * d4 < 0) pts.push(add(A, mul(sub(B, A), d3 / (d3 - d4))));
+    }
+    const a = toS(A), b = toS(B);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 5.5 * d; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke();
+    ctx.strokeStyle = '#c2410c'; ctx.lineWidth = 2.5 * d; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke();
+    ctx.fillStyle = '#c2410c';
+    if (pts.length < 2000) for (const p of pts) { const s = toS(p); ctx.beginPath(); ctx.arc(s[0], s[1], 3.4 * d, 0, 7); ctx.fill(); }
+    const n = lifts ? pts.length : st.stats.happiness;
+    ctx.font = `600 ${13 * d}px Inter, sans-serif`; ctx.fillStyle = '#c2410c';
+    const lab = `${n.toLocaleString()} crossing${n === 1 ? '' : 's'}`;
+    if (n >= 2) { ctx.lineWidth = 4 * d; ctx.strokeStyle = '#fff'; ctx.strokeText(lab, b[0] + 8 * d, b[1]); ctx.fillText(lab, b[0] + 8 * d, b[1]); }
+  }
+  const dn = $('dense'); dn.style.display = tooDense ? 'block' : 'none';
+  if (tooDense) dn.textContent = 'Edges wrap around too many times to draw. Showing vertices only.';
+}
+
+// pan & zoom
+let drag = null;
+cv.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy }; cv.setPointerCapture(e.pointerId); cv.style.cursor = 'grabbing'; });
+cv.addEventListener('pointermove', (e) => { if (!drag) return; const r = cv.getBoundingClientRect(), s = Math.min(r.width, r.height) / (2 * view.R); view.cx = drag.cx - (e.clientX - drag.x) / s; view.cy = drag.cy + (e.clientY - drag.y) / s; redraw(); });
+cv.addEventListener('pointerup', () => { drag = null; cv.style.cursor = 'grab'; });
+cv.addEventListener('wheel', (e) => { e.preventDefault(); view.R = Math.min(view.R0 * 6, Math.max(view.R0 / 8, view.R * Math.exp(e.deltaY * 0.0012))); redraw(); }, { passive: false });
+let raf = 0; const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); }); };
+
+// ---------- controls ----------
+$('presets').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  preset = b.dataset.p; [...$('presets').children].forEach((x) => x.classList.toggle('on', x === b));
+  $('crand').style.display = preset === 'rand' ? '' : 'none'; $('ctx').style.display = preset === 'tx' ? '' : 'none';
+  compute();
+});
+let tmr = 0; const later = () => { clearTimeout(tmr); tmr = setTimeout(compute, 200); };
+$('nr').oninput = () => { $('nv').textContent = $('nr').value; later(); };
+$('tr').oninput = () => { $('tv').textContent = skew().toLocaleString(); later(); };
+$('xr').oninput = () => { $('xv').textContent = Math.round(xval()).toLocaleString(); later(); };
+$('seed').onclick = () => { seed = (Math.random() * 2 ** 31) | 0; compute(); };
+addEventListener('resize', resize);
+$('tv').textContent = skew(); $('xv').textContent = Math.round(xval());
+compute(); resize();
+})();
+</script>
+</body>
+</html>
