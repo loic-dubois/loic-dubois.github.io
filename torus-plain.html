@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delaunay flips on a flat torus</title>
+<style>
+html,body{margin:0;height:100%;background:#fff;color-scheme:light;overflow:hidden;font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#1f2024}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas.pan{cursor:grabbing}
+#op{position:fixed;left:0;right:0;top:22px;text-align:center;font:500 15px/1.3 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;letter-spacing:.01em;pointer-events:none;user-select:none}
+#stats{position:fixed;left:0;right:0;top:44px;text-align:center;font:400 12.5px/1.3 Inter,system-ui,sans-serif;color:#7d7a8c;pointer-events:none;user-select:none;font-variant-numeric:tabular-nums}
+#tl{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);width:min(560px,78vw);height:28px;touch-action:none;cursor:pointer}
+#tl .rail{position:absolute;left:0;right:0;top:13px;height:2px;border-radius:1px;background:#d9d6e3}
+#tl .done{position:absolute;left:0;top:13px;height:2px;border-radius:1px;background:#1f2024}
+#tl .knob{position:absolute;top:5px;width:18px;height:18px;margin-left:-9px;border-radius:50%;background:#fff;border:2px solid #1f2024;box-sizing:border-box;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+#tl.drag .knob{cursor:grabbing}
+#ui{position:fixed;left:14px;top:14px;background:rgba(255,255,255,.92);border:1px solid #ece9f2;border-radius:12px;padding:10px 12px;box-shadow:0 1px 4px rgba(31,32,36,.05);font-size:12px;line-height:1.2;user-select:none;display:flex;flex-direction:column;gap:7px}
+#ui .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#ui .lab{color:#8a879a;width:44px}
+#ui button{font:inherit;color:#1f2024;background:#fff;border:1px solid #d9d6e3;border-radius:999px;padding:3px 9px;cursor:pointer}
+#ui button:hover{border-color:#b9b5c9}
+#ui button.on{background:#1f2024;color:#fff;border-color:#1f2024}
+#ui .num{min-width:20px;text-align:center;font-variant-numeric:tabular-nums}
+#ui button.sq{padding:3px 0;width:22px}
+#legend{display:flex;flex-direction:column;gap:4px;margin-top:6px;color:#5f5c6d}
+#legend span{flex:none;display:inline-block;width:16px;height:3px;border-radius:2px;margin-right:7px;vertical-align:middle}
+#legend i{display:inline-block;width:12px;height:12px;border:1.5px solid #9ea2f0;border-radius:50%;margin:0 9px 0 2px;vertical-align:middle;box-sizing:border-box}
+#sigcap{position:fixed;right:18px;font-size:11.5px;color:#7d7a8c;width:170px;text-align:center;pointer-events:none;user-select:none}
+#ui .body{display:flex;flex-direction:column;gap:7px}
+#ui .toggle{color:#8a879a;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;align-self:flex-start}
+@media (max-width:760px){#ui{top:86px;left:10px;font-size:11.5px;padding:7px 10px}#stats{padding:0 14px;font-size:11.5px}#ui.collapsed .body{display:none}#sigcap{display:none}}
+@media (min-width:761px){#ui .body{display:flex;flex-direction:column;gap:7px}
+#ui .toggle{display:none}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="op" hidden></div><div id="stats" hidden></div>
+<div id="tl"><div class="rail"></div><div class="done"></div><div class="knob"></div></div>
+<script>
+(() => {
+// Delaunay flip algorithm on a flat torus (Dubois, CGT 2023).
+// A triangulation is stored as triangles whose corners are (vertex id, lattice offset): the corner lies at p[v] + o1*g1 + o2*g2.
+const COL = { edge: '#1f2024', flip: '#ff9f1a', made: '#14b871', circ: '#9ea2f0', grid: '#e4e1ea', dom: '#ece9f4', face: 'rgba(251,250,247,0.9)' };
+const SHAPES = { square: [[1, 0], [0, 1]], hex: [[1, 0], [0.5, Math.sqrt(3) / 2]], oblique: [[1, 0], [0.36, 0.78]] };
+const cfg = { mode: 'twist', shape: 'square', n: 8, k: 3, seed: (Math.random() * 2 ** 31) | 0 };
+
+// ---------------- geometry on the torus
+let g1, g2, det, P; // basis, vertices
+const W = (v, o) => [P[v][0] + o[0] * g1[0] + o[1] * g2[0], P[v][1] + o[0] * g1[1] + o[1] * g2[1]];
+const toLat = (x, y) => [(x * g2[1] - y * g2[0]) / det, (g1[0] * y - g1[1] * x) / det];
+const fromLat = (i, j) => [i * g1[0] + j * g2[0], i * g1[1] + j * g2[1]];
+const orient = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+function incircle(a, b, c, d) {
+  const ax = a[0] - d[0], ay = a[1] - d[1], bx = b[0] - d[0], by = b[1] - d[1], cx = c[0] - d[0], cy = c[1] - d[1];
+  const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+  const v = a2 * (bx * cy - cx * by) - b2 * (ax * cy - cx * ay) + c2 * (ax * by - bx * ay);
+  const s = a2 + b2 + c2;
+  return v / (s * s); // scale-free: > 0 means d strictly inside the circle through a, b, c (ccw)
+}
+function circum(a, b, c) {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  const a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+  const x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d, y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+  return [x, y, Math.hypot(a[0] - x, a[1] - y)];
+}
+const corners = (t) => t.v.map((v, i) => W(v, t.o[i]));
+function normalize(t) { // move the triangle so its centroid sits in the fundamental domain
+  const c = corners(t), l = toLat((c[0][0] + c[1][0] + c[2][0]) / 3, (c[0][1] + c[1][1] + c[2][1]) / 3);
+  const w = [Math.floor(l[0]), Math.floor(l[1])];
+  t.o = t.o.map((o) => [o[0] - w[0], o[1] - w[1]]);
+  return t;
+}
+const key = (u, w, d) => u + ',' + w + ',' + d[0] + ',' + d[1];
+function edgeMap(T) {
+  const m = new Map();
+  T.forEach((t, i) => { for (let k = 0; k < 3; k++) { const k1 = (k + 1) % 3; m.set(key(t.v[k], t.v[k1], [t.o[k1][0] - t.o[k][0], t.o[k1][1] - t.o[k][1]]), [i, k]); } });
+  return m;
+}
+// every undirected edge once, with its quad and its Delaunay status
+function edges(T) {
+  const m = edgeMap(T), out = [];
+  T.forEach((t, i) => {
+    for (let k = 0; k < 3; k++) {
+      const k1 = (k + 1) % 3, k2 = (k + 2) % 3, d = [t.o[k1][0] - t.o[k][0], t.o[k1][1] - t.o[k][1]];
+      const tw = m.get(key(t.v[k1], t.v[k], [-d[0], -d[1]]));
+      if (!tw) throw new Error('open edge');
+      const [j, kk] = tw;
+      if (j < i || (j === i && kk < k)) continue;
+      const u = T[j], s = [t.o[k][0] - u.o[(kk + 1) % 3][0], t.o[k][1] - u.o[(kk + 1) % 3][1]];
+      const dc = (kk + 2) % 3, oD = [u.o[dc][0] + s[0], u.o[dc][1] + s[1]];
+      const A = W(t.v[k], t.o[k]), B = W(t.v[k1], t.o[k1]), C = W(t.v[k2], t.o[k2]), D = W(u.v[dc], oD);
+      out.push({ i, k, j, kk, oD, A, B, C, D, len: Math.hypot(B[0] - A[0], B[1] - A[1]), ic: incircle(A, B, C, D) });
+    }
+  });
+  return out;
+}
+const EPS = 1e-9;
+function flip(T, e) {
+  const t = T[e.i], u = T[e.j], k = e.k, k1 = (k + 1) % 3, k2 = (k + 2) % 3, dv = u.v[(e.kk + 2) % 3];
+  const a = [t.v[k], t.o[k]], b = [t.v[k1], t.o[k1]], c = [t.v[k2], t.o[k2]], d = [dv, e.oD];
+  const mk = (x, y, z) => normalize({ v: [x[0], y[0], z[0]], o: [x[1].slice(), y[1].slice(), z[1].slice()] });
+  T[e.i] = mk(a, d, c); T[e.j] = mk(d, b, c); // quad A, D, B, C (ccw) split along C-D
+  return [W(c[0], c[1]), W(dv, e.oD)];
+}
+const clone = (T) => T.map((t) => ({ v: t.v.slice(), o: t.o.map((o) => o.slice()) }));
+
+// ---------------- starting triangulations
+function rng(seed) { let r = seed >>> 0; return () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296); }
+function torusDist(a, b) {
+  let best = Infinity;
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const w = fromLat(i, j); best = Math.min(best, Math.hypot(a[0] - b[0] - w[0], a[1] - b[1] - w[1])); }
+  return best;
+}
+function twisted() {
+  const rnd = rng(cfg.seed), n = cfg.n;
+  // well spread random points in the fundamental domain
+  const pts = [], rmin = 0.62 * Math.sqrt(Math.abs(det) / n);
+  for (let tries = 0; pts.length < n && tries < 20000; tries++) {
+    const q = fromLat(rnd(), rnd());
+    if (pts.every((p) => torusDist(p, q) > rmin * (tries > 8000 ? 0.5 : 1))) pts.push(q);
+  }
+  while (pts.length < n) pts.push(fromLat(rnd(), rnd()));
+  P = [pts[0]];
+  let T = [{ v: [0, 0, 0], o: [[0, 0], [1, 0], [1, 1]] }, { v: [0, 0, 0], o: [[0, 0], [1, 1], [0, 1]] }].map(normalize);
+  for (let v = 1; v < n; v++) { // insert by splitting the face that contains the point
+    const q = pts[v], ql = toLat(q[0], q[1]); P.push(q);
+    let hit = null;
+    for (let i = 0; i < T.length && !hit; i++) {
+      const c = corners(T[i]), L = c.map((p) => toLat(p[0], p[1]));
+      const lo = [Math.min(...L.map((l) => l[0])), Math.min(...L.map((l) => l[1]))], hi = [Math.max(...L.map((l) => l[0])), Math.max(...L.map((l) => l[1]))];
+      for (let a = Math.ceil(ql[0] - hi[0]) - 1; a <= Math.floor(ql[0] - lo[0]) + 1 && !hit; a++)
+        for (let b = Math.ceil(ql[1] - hi[1]) - 1; b <= Math.floor(ql[1] - lo[1]) + 1 && !hit; b++) {
+          const w = fromLat(a, b), qq = [q[0] - w[0], q[1] - w[1]];
+          if (orient(c[0], c[1], qq) > 1e-12 && orient(c[1], c[2], qq) > 1e-12 && orient(c[2], c[0], qq) > 1e-12) hit = [i, [-a, -b]];
+        }
+    }
+    if (!hit) { P.pop(); continue; }
+    const [i, oq] = hit, t = T[i], Q = [v, oq], X = t.v.map((x, m) => [x, t.o[m]]);
+    const mk = (x, y, z) => normalize({ v: [x[0], y[0], z[0]], o: [x[1].slice(), y[1].slice(), z[1].slice()] });
+    T.splice(i, 1, mk(X[0], X[1], Q), mk(X[1], X[2], Q), mk(X[2], X[0], Q));
+  }
+  for (let g = 0; g < 10000; g++) { const f = edges(T).find((e) => e.ic > EPS); if (!f) break; flip(T, f); }
+  // Dehn twist: apply the lattice map (i, j) -> (i + k j, j) to the whole lift
+  const K = cfg.k, M = (o) => [o[0] + K * o[1], o[1]];
+  const r = P.map((p) => { const l = M(toLat(p[0], p[1])), f = [Math.floor(l[0]), Math.floor(l[1])]; return { p: fromLat(l[0] - f[0], l[1] - f[1]), f }; });
+  P = r.map((x) => x.p);
+  T = T.map((t) => normalize({ v: t.v.slice(), o: t.o.map((o, m) => { const mo = M(o), f = r[t.v[m]].f; return [mo[0] + f[0], mo[1] + f[1]]; }) }));
+  return T;
+}
+function prop3() { // the family F from the proof of Proposition 3, unit square torus
+  const n = cfg.n, d = cfg.k * n;
+  P = []; for (let v = 0; v < n; v++) P.push([v / n, 0]);
+  const C = (z, e) => [((z % n) + n) % n, [Math.floor(z / n), e]];
+  const mk = (x, y, z) => normalize({ v: [x[0], y[0], z[0]], o: [x[1], y[1], z[1]] });
+  const T = [];
+  for (let i = 0; i < n; i++) { // zigzag of free edges s_{i, i+d}
+    T.push(mk(C(i, 0), C(i + 1, 0), C(i + d, 1)));
+    T.push(mk(C(i + 1, 0), C(i + d + 1, 1), C(i + d, 1)));
+  }
+  return T;
+}
+
+// ---------------- run the algorithm: always flip a longest Delaunay-flippable edge
+let steps = [], sigMax = 1, Lambda0 = 0;
+function run() {
+  const sh = cfg.mode === 'prop3' ? SHAPES.square : SHAPES[cfg.shape];
+  g1 = sh[0]; g2 = sh[1]; det = g1[0] * g2[1] - g1[1] * g2[0];
+  let T = cfg.mode === 'prop3' ? prop3() : twisted();
+  steps = []; let made = null, sigs = [];
+  for (let s = 0; s < 6000; s++) {
+    const E = edges(T), fl = E.filter((e) => e.ic > EPS).sort((a, b) => b.len - a.len);
+    if (s === 0) Lambda0 = Math.max(...E.map((e) => e.len));
+    const st = { T: clone(T), fl: fl.map((e) => [e.A, e.B]), next: fl[0] || null, made, sigs: sigs.slice(), maxLen: Math.max(...E.map((e) => e.len)) };
+    steps.push(st);
+    if (!fl.length) break;
+    const e = fl[0];
+    sigs.push([e.B[0] - e.A[0], e.B[1] - e.A[1]]);
+    made = flip(T, e);
+  }
+  sigMax = Math.max(1e-9, ...steps[steps.length - 1].sigs.map((s) => Math.hypot(s[0], s[1])));
+}
+
+// ---------------- view
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+let Wd = 0, Ht = 0, dpr = 1, view = { cx: 0.5, cy: 0.5, s: 100 };
+const scr = (p) => [Wd / 2 + (p[0] - view.cx) * view.s, Ht / 2 - (p[1] - view.cy) * view.s];
+const wld = (x, y) => [view.cx + (x - Wd / 2) / view.s, view.cy - (y - Ht / 2) / view.s];
+function fitView() {
+  const T = steps[0].T; let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const t of T) for (const c of corners(t)) { x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]); }
+  for (const c of [[0, 0], g1, g2, [g1[0] + g2[0], g1[1] + g2[1]]]) { x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); y0 = Math.min(y0, c[1]); y1 = Math.max(y1, c[1]); }
+  const narrow = Wd < 760, top = 30, bot = 70, side = 24;
+  const aw = Math.max(100, Wd - 2 * side), ah = Math.max(100, Ht - top - bot);
+  view.s = Math.min(aw / (x1 - x0 || 1), ah / (y1 - y0 || 1)) * 0.92;
+  view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2 - ((top - bot) / 2) / view.s;
+}
+function resize() {
+  dpr = Math.min(2, devicePixelRatio || 1); Wd = innerWidth; Ht = innerHeight;
+  canvas.width = Wd * dpr; canvas.height = Ht * dpr; draw();
+}
+// lattice translates of a world-space box that meet the view
+function translates(x0, y0, x1, y1) {
+  const v0 = wld(0, Ht), v1 = wld(Wd, 0), out = [];
+  const cs = [[v0[0] - x1, v0[1] - y1], [v1[0] - x0, v0[1] - y1], [v0[0] - x1, v1[1] - y0], [v1[0] - x0, v1[1] - y0]].map((p) => toLat(p[0], p[1]));
+  const i0 = Math.floor(Math.min(...cs.map((c) => c[0]))), i1 = Math.ceil(Math.max(...cs.map((c) => c[0])));
+  const j0 = Math.floor(Math.min(...cs.map((c) => c[1]))), j1 = Math.ceil(Math.max(...cs.map((c) => c[1])));
+  if ((i1 - i0) * (j1 - j0) > 40000) return out;
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    const w = fromLat(i, j);
+    if (x1 + w[0] >= v0[0] && x0 + w[0] <= v1[0] && y1 + w[1] >= v0[1] && y0 + w[1] <= v1[1]) out.push(w);
+  }
+  return out;
+}
+const bbox = (pts) => [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+function segAll(a, b) { // stroke every lift of a segment
+  const bb = bbox([a, b]);
+  for (const w of translates(...bb)) { const p = scr([a[0] + w[0], a[1] + w[1]]), q = scr([b[0] + w[0], b[1] + w[1]]); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); }
+}
+let idx = 0;
+function draw() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, Wd, Ht);
+  if (!steps.length) return;
+  const st = steps[idx], lw = Math.max(0.6, Math.min(1.2, view.s / 160));
+  ctx.strokeStyle = '#1f2024'; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.beginPath();
+  for (const t of st.T) { const c = corners(t); for (let k = 0; k < 3; k++) segAll(c[k], c[(k + 1) % 3]); }
+  ctx.stroke();
+  ctx.fillStyle = '#1f2024'; const vr = Math.max(1.4, Math.min(2.6, view.s / 80));
+  for (const p of P) for (const w of translates(p[0], p[1], p[0], p[1])) { const q = scr([p[0] + w[0], p[1] + w[1]]); ctx.beginPath(); ctx.arc(q[0], q[1], vr, 0, 7); ctx.fill(); }
+}
+function drawSig() {}
+// ---------------- pan / zoom
+const ptrs = new Map(); let pinch = null;
+canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); canvas.classList.add('pan'); pinch = null; });
+canvas.addEventListener('pointermove', (e) => {
+  if (!ptrs.has(e.pointerId)) return;
+  const prev = ptrs.get(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+  if (ptrs.size === 1) { view.cx -= (e.clientX - prev[0]) / view.s; view.cy += (e.clientY - prev[1]) / view.s; draw(); return; }
+  const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]), m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  if (pinch) { zoomAt(m[0], m[1], d / pinch.d); view.cx -= (m[0] - pinch.m[0]) / view.s; view.cy += (m[1] - pinch.m[1]) / view.s; draw(); }
+  pinch = { d, m };
+});
+const up = (e) => { ptrs.delete(e.pointerId); pinch = null; if (!ptrs.size) canvas.classList.remove('pan'); };
+canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+function zoomAt(x, y, f) { const p = wld(x, y); view.s = Math.max(8, Math.min(5000, view.s * f)); const q = wld(x, y); view.cx += p[0] - q[0]; view.cy += p[1] - q[1]; }
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); draw(); }, { passive: false });
+canvas.addEventListener('dblclick', () => { fitView(); draw(); });
+
+// ---------------- timeline: left = input, right = Delaunay
+const opEl = document.getElementById('op'), statsEl = document.getElementById('stats');
+const tl = document.getElementById('tl'), knob = tl.querySelector('.knob'), done = tl.querySelector('.done');
+const f2 = (x) => x.toFixed(2);
+function show(i) {
+  idx = Math.max(0, Math.min(steps.length - 1, i));
+  const n = steps.length, x = n > 1 ? idx / (n - 1) : 0, st = steps[idx], m = n - 1;
+  knob.style.left = x * 100 + '%'; done.style.width = x * 100 + '%';
+  if (idx === 0 && st.next) opEl.textContent = cfg.mode === 'prop3' ? 'Input: a triangulation from the family F (Prop. 3)' : 'Input: a Dehn-twisted Delaunay triangulation';
+  else if (!st.next) opEl.textContent = 'Delaunay triangulation: no flippable edge left';
+  else opEl.textContent = `Flip ${idx + 1} of ${m}: edge of length ${f2(st.next.len)} → ${f2(Math.hypot(st.next.C[0] - st.next.D[0], st.next.C[1] - st.next.D[1]))}`;
+  const nv = P.length;
+  statsEl.textContent = `n = ${nv}   ·   Λ(T₀) = ${f2(Lambda0)}   ·   longest edge now ${f2(st.maxLen)}   ·   ${st.fl.length} flippable   ·   ${m} flips in all = ${f2(m / (nv * nv * Lambda0))} · n²Λ`;
+  draw();
+}
+let dragging = false;
+const seek = (e) => { const r = tl.getBoundingClientRect(), x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); show(Math.round(x * (steps.length - 1))); };
+tl.addEventListener('pointerdown', (e) => { dragging = true; tl.classList.add('drag'); tl.setPointerCapture(e.pointerId); seek(e); });
+tl.addEventListener('pointermove', (e) => { if (dragging) seek(e); });
+const stop = () => { dragging = false; tl.classList.remove('drag'); };
+tl.addEventListener('pointerup', stop); tl.addEventListener('pointercancel', stop);
+addEventListener('keydown', (e) => {
+  const d = { ArrowRight: 1, ArrowLeft: -1, PageDown: 10, PageUp: -10 }[e.key];
+  if (d) { show(idx + d); e.preventDefault(); } else if (e.key === 'Home') show(0); else if (e.key === 'End') show(steps.length - 1);
+});
+
+function rebuild() { run(); fitView(); show(0); }
+addEventListener('resize', () => { resize(); fitView(); draw(); });
+Wd = innerWidth; Ht = innerHeight; dpr = Math.min(2, devicePixelRatio || 1); canvas.width = Wd * dpr; canvas.height = Ht * dpr;
+rebuild();
+})();
+</script>
+</body>
+</html>
