@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obstruction graphs</title>
+<style>
+/* VOICE: a plate of figures from a paper
+   IDEA: each graph as a small figure with a one-line caption
+   PICTURE: the graphs themselves, black on white
+   COLOUR and TYPE: black ink, grey captions, serif
+   LAYOUT: grid of figures; candidates in a second grid */
+:root{color-scheme:light dark;--bg:light-dark(#fff,#151515);--ink:light-dark(#111,#eee);--muted:light-dark(#666,#aaa);--card:light-dark(#fff,#1d1d1d);--rule:light-dark(#e4e4e4,#333)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Georgia,'Times New Roman',serif;overflow-x:clip}
+main{padding:20px max(4vw,16px) 40px}
+h2{font-size:18px;font-weight:normal;margin:26px 0 10px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:6px}
+.card svg{width:100%;aspect-ratio:1;display:block;}
+.cap{font-size:13px;color:var(--muted);text-align:center;line-height:1.3;padding:2px 4px}
+.h{cursor:grab}
+@media (max-width:600px){.grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}}
+</style></head><body>
+<main>
+  <div class="grid" id="known"></div>
+  <hr id="candh" hidden style="border:0;border-top:1px solid var(--rule);margin:28px 0">
+  <div class="grid" id="cand"></div>
+</main>
+<script src="graphs.js"></script>
+<script>
+{
+const NS='http://www.w3.org/2000/svg';
+const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const load=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch(e){return null;}};
+const r4=x=>+x.toFixed(4);
+class Fig{
+  constructor(g,host,caption){
+    this.g=g;this.key='graph-'+g.id;this.P=g.pos.map(p=>[p[0],p[1]]);
+    const card=document.createElement('div');card.className='card';
+    this.svg=document.createElementNS(NS,'svg');this.svg.setAttribute('viewBox','-1.15 -1.15 2.3 2.3');
+    this.svg.setAttribute('role','img');this.svg.setAttribute('aria-label',caption);
+    card.append(this.svg);host.appendChild(card);
+    // group parallel edges and loops
+    const grp={};g.edges.forEach((e,i)=>{const a=Math.min(e[0],e[1]),b=Math.max(e[0],e[1]);(grp[a+'|'+b]=grp[a+'|'+b]||[]).push(i);});
+    this.off={};Object.values(grp).forEach(L=>L.forEach((i,j)=>{this.off[i]=[j,L.length];}));
+    this.render();
+  }
+  toData(ev){const pt=this.svg.createSVGPoint();pt.x=ev.clientX;pt.y=ev.clientY;const q=pt.matrixTransform(this.svg.getScreenCTM().inverse());return[Math.max(-1.05,Math.min(1.05,q.x)),Math.max(-1.05,Math.min(1.05,-q.y))];}
+  el(tag,a){const x=document.createElementNS(NS,tag);for(const k in a)x.setAttribute(k,a[k]);this.svg.appendChild(x);return x;}
+  loopPath(v,j,L){
+    // place loops in the widest free angular gap around v
+    const p=this.P[v];const angs=[];
+    this.g.edges.forEach(e=>{if(e[0]!==e[1]&&(e[0]===v||e[1]===v)){const w=this.P[e[0]===v?e[1]:e[0]];angs.push(Math.atan2(w[1]-p[1],w[0]-p[0]));}});
+    angs.sort((a,b)=>a-b);let base=Math.PI/2,gap=2*Math.PI;
+    if(angs.length){gap=0;for(let k=0;k<angs.length;k++){const a=angs[k],b=k+1<angs.length?angs[k+1]:angs[0]+2*Math.PI;if(b-a>gap){gap=b-a;base=a;}}}
+    const ang=angs.length?base+gap*(j+1)/(L+1):base+2*Math.PI*j/L;
+    const r=0.15,c=[p[0]+Math.cos(ang)*r,p[1]+Math.sin(ang)*r],w=1.1;
+    const a1=[c[0]+Math.cos(ang+Math.PI/2)*r*w+Math.cos(ang)*r*0.9,c[1]+Math.sin(ang+Math.PI/2)*r*w+Math.sin(ang)*r*0.9];
+    const a2=[c[0]-Math.cos(ang+Math.PI/2)*r*w+Math.cos(ang)*r*0.9,c[1]-Math.sin(ang+Math.PI/2)*r*w+Math.sin(ang)*r*0.9];
+    return `M${r4(p[0])},${r4(-p[1])} C${r4(a1[0])},${r4(-a1[1])} ${r4(a2[0])},${r4(-a2[1])} ${r4(p[0])},${r4(-p[1])}`;
+  }
+  render(){
+    this.svg.innerHTML='';
+    this.g.edges.forEach((e,i)=>{
+      const [j,L]=this.off[i];let d;
+      if(e[0]===e[1]) d=this.loopPath(e[0],j,L);
+      else{const a=this.P[e[0]],b=this.P[e[1]];const o=j-(L-1)/2;
+        if(!o) d=`M${r4(a[0])},${r4(-a[1])} L${r4(b[0])},${r4(-b[1])}`;
+        else{const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy)||1;const s=o*0.32*len*(e[0]<e[1]?1:-1);
+          const c=[(a[0]+b[0])/2-dy/len*s,(a[1]+b[1])/2+dx/len*s];d=`M${r4(a[0])},${r4(-a[1])} Q${r4(c[0])},${r4(-c[1])} ${r4(b[0])},${r4(-b[1])}`;}}
+      this.el('path',{d,stroke:'var(--ink)','stroke-width':0.02,fill:'none','stroke-linecap':'round'});
+    });
+    this.P.forEach(p=>this.el('circle',{cx:p[0],cy:-p[1],r:0.055,fill:'var(--ink)'}));
+  }
+}
+const D=window.GRAPHS||{graphs:[],candidates:[]};
+const top=g=>{const deg=new Array(g.vertices).fill(0);g.edges.forEach(e=>{deg[e[0]]++;deg[e[1]]++;});return deg.filter(x=>x!==2).length;};
+D.graphs.forEach(g=>new Fig(g,document.getElementById('known'),`rank ${g.rank} · ${g.vertices} vertices · ${g.witnesses.join(', ')}`));
+if(D.candidates.length){document.getElementById('candh').hidden=false;
+  D.candidates.forEach(g=>new Fig(g,document.getElementById('cand'),`rank ${g.rank} · ${g.vertices} vertices · undecided`));}
+}
+</script></body></html>
