@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harmonious drawing to embedding</title>
+<style>
+/* VOICE: silent loop. IDEA: a polygonal schema from the paper, finely subdivided.
+   PICTURE: the octagon of a genus-2 surface, 1024 triangles; a tangled 30-vertex graph drawing, harmonized, then spread into an embedding.
+   COLOUR: paper red, lavender, green / ink / amber loops. LAYOUT: canvas only. */
+:root{--ink:#1f2024}
+html,body{margin:0;height:100%;background:transparent;color:var(--ink);overflow:hidden}
+canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+{
+// ---- Hyperbolic {3,8} tiling: the universal cover of a reducing triangulation ----
+const DEG = 8;
+const S = 2 * Math.acosh(Math.cos(Math.PI / 3) / Math.sin(Math.PI / DEG)); // edge length
+const mmul = (A, B) => { const C = new Array(9).fill(0); for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) { let s = 0; for (let k = 0; k < 3; k++) s += A[i*3+k] * B[k*3+j]; C[i*3+j] = s; } return C; };
+const mvec = (A, v) => [A[0]*v[0]+A[1]*v[1]+A[2]*v[2], A[3]*v[0]+A[4]*v[1]+A[5]*v[2], A[6]*v[0]+A[7]*v[1]+A[8]*v[2]];
+const rot = a => { const c = Math.cos(a), s = Math.sin(a); return [c,-s,0, s,c,0, 0,0,1]; };
+const boostX = d => { const c = Math.cosh(d), s = Math.sinh(d); return [c,0,s, 0,1,0, s,0,c]; };
+const STEP = k => mmul(mmul(rot(2*Math.PI*k/DEG), boostX(S)), rot(Math.PI));
+const STEPS = Array.from({length: DEG}, (_, k) => STEP(k));
+const NB0 = Array.from({length: DEG}, (_, k) => [Math.sinh(S)*Math.cos(2*Math.PI*k/DEG), Math.sinh(S)*Math.sin(2*Math.PI*k/DEG), Math.cosh(S)]);
+const mink = (a, b) => a[0]*b[0] + a[1]*b[1] - a[2]*b[2];
+const normH = p => { const n = Math.sqrt(Math.max(1e-12, -mink(p, p))); return [p[0]/n, p[1]/n, p[2]/n]; };
+
+const V = [];               // {p, M, c, nb:[ids|undefined]}
+const index = new Map();
+const key = p => Math.round(p[0]*200) + ',' + Math.round(p[1]*200);
+function addVertex(M, c) { const p = [M[2], M[5], M[8]]; const id = V.length; V.push({p, M, c, nb: new Array(DEG)}); index.set(key(p), id); return id; }
+addVertex([1,0,0, 0,1,0, 0,0,1], 0);
+function nb(v, j) {
+  j = ((j % DEG) + DEG) % DEG; const o = V[v];
+  if (o.nb[j] !== undefined) return o.nb[j];
+  const p = mvec(o.M, NB0[j]); const k = key(p);
+  let id = index.get(k);
+  if (id === undefined) id = addVertex(mmul(o.M, STEPS[j]), (o.c + j + 1) % 2);
+  o.nb[j] = id; return id;
+}
+function nbs(v) { for (let j = 0; j < DEG; j++) nb(v, j); return V[v].nb; }
+function idxOf(v, u) { const a = nbs(v); const i = a.indexOf(u); if (i < 0) throw new Error('not adjacent'); return i; }
+// colour of the triangle (v, nb j, nb j+1): 0 = blue, 1 = red
+const triColor = (v, j) => (V[v].c + (((j % DEG) + DEG) % DEG)) % 2;
+const dist0 = v => Math.acosh(Math.max(1, V[v].p[2]));
+
+// ---- turns (Section 3.1) ----
+// left count L = triangles on the left between incoming and outgoing edges
+function turn(u, v, w) {
+  const iu = idxOf(v, u), iw = idxOf(v, w);
+  const L = ((iu - iw) % DEG + DEG) % DEG;
+  const k = L <= 3 ? L : (DEG - L <= 3 ? -(DEG - L) : L);
+  const col = triColor(v, iu - 1) === 1 ? 'r' : 'b'; // triangle left of incoming edge u->v
+  return {k, col, L};
+}
+const isBad = t => t.k === 0 || t.k === 1 || t.k === -1 || (Math.abs(t.k) === 2 && t.col === 'r');
+function turns(W) { const out = []; for (let i = 1; i < W.length - 1; i++) out.push(turn(W[i-1], W[i], W[i+1])); return out; }
+
+// push subwalk W[a..b] across the triangles to its left (fan boundary)
+function pushLeft(W, a, b) {
+  const sub = [W[a]], swept = [];
+  for (let j = a + 1; j < b; j++) {
+    const v = W[j], ip = idxOf(v, W[j-1]), inx = idxOf(v, W[j+1]);
+    const L = ((ip - inx) % DEG + DEG) % DEG;
+    for (let s = 1; s < L; s++) { const x = nb(v, ip - s); if (sub[sub.length-1] !== x) sub.push(x); }
+    for (let s = 0; s < L; s++) swept.push([v, nb(v, inx + s), nb(v, inx + s + 1)]);
+  }
+  if (sub[sub.length-1] !== W[b]) sub.push(W[b]);
+  if (sub.length >= 3 && sub[0] === sub[sub.length-1] && b - a === 2 && sub.length === 2) sub.pop();
+  // collapse spur: [x, x]
+  const clean = []; for (const x of sub) if (clean[clean.length-1] !== x) clean.push(x);
+  return {sub: clean, swept};
+}
+
+// find all applicable moves on W (forward); returns list of {type,a,b,label}
+const okEnd = t => t === null || t.k === 4 || t.k === -2 || t.k === -3;
+function findMovesForward(W) {
+  const T = turns(W), n = W.length, res = [];
+  const tAt = i => (i <= 0 || i >= n - 1) ? null : T[i-1];
+  for (let i = 1; i < n - 1; i++) {
+    const t = T[i-1];
+    if (t.k === 0) res.push({type: 'spur', a: i-1, b: i+1, label: '0'});
+    else if (t.k === 1) res.push({type: 'spike', a: i-1, b: i+1, label: '1'});
+    else if (t.k === 2) {
+      // bracket: 2 3^k 2
+      let j = i + 1; while (j < n - 1 && T[j-1].k === 3) j++;
+      if (j < n - 1 && T[j-1].k === 2) res.push({type: 'bracket', a: i-1, b: j+1, label: '2 ' + (j-i-1 ? '3' + sup(j-i-1) + ' ' : '') + '2'});
+      // flip: a 3^k 2r 3^l b
+      if (t.col === 'r') {
+        let s = i - 1; while (s >= 1 && T[s-1].k === 3) s--;
+        let e = i + 1; while (e < n - 1 && T[e-1].k === 3) e++;
+        if (okEnd(tAt(s)) && okEnd(tAt(e))) res.push({type: 'flip', a: s, b: e, label: (s ? fmt(tAt(s)) : 'E') + ' ' + rep3(i-1-s) + '2ᵣ ' + rep3(e-i-1) + (e < n-1 ? fmt(tAt(e)) : 'E')});
+      }
+    }
+  }
+  return res;
+}
+const sup = k => String(k).split('').map(d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join('');
+const rep3 = k => k ? '3' + (k > 1 ? sup(k) : '') + ' ' : '';
+const fmt = t => (t.k < 0 ? '−' + (-t.k) : '' + t.k);
+function findMoves(W) {
+  const out = findMovesForward(W).map(m => ({...m, rev: false}));
+  const R = W.slice().reverse(), n = W.length;
+  for (const m of findMovesForward(R)) out.push({...m, rev: true, label: '(reversed) ' + m.label});
+  return out;
+}
+function applyMove(W, m) {
+  if (!m.rev) { const {sub, swept} = pushLeft(W, m.a, m.b); return {W: W.slice(0, m.a).concat(sub, W.slice(m.b + 1)), oldSub: W.slice(m.a, m.b+1), sub, a: m.a, b: m.b, swept}; }
+  const R = W.slice().reverse(), n = W.length;
+  const {sub, swept} = pushLeft(R, m.a, m.b);
+  const NR = R.slice(0, m.a).concat(sub, R.slice(m.b + 1));
+  const a = n - 1 - m.b, b = n - 1 - m.a;
+  return {W: NR.reverse(), oldSub: W.slice(a, b+1), sub: sub.slice().reverse(), a, b, swept};
+}
+const prio = {spur: 0, spike: 1, bracket: 2, flip: 3};
+function pickMove(W, rng) {
+  const ms = findMoves(W); if (!ms.length) return null;
+  if (rng) return ms[Math.floor(rng() * ms.length)];
+  ms.sort((x, y) => prio[x.type] - prio[y.type] || Math.min(x.a, W.length-1-x.b) - Math.min(y.a, W.length-1-y.b) || x.a - y.a);
+  return ms[0];
+}
+function reduceAll(W, rng) { let guard = 0; for (;;) { const m = pickMove(W, rng); if (!m) return W; W = applyMove(W, m).W; if (++guard > 5000) throw new Error('no termination'); } }
+const badCount = W => turns(W).filter(isBad).length;
+
+function randomWalk(len, maxR, rng) {
+  const W = [0];
+  while (W.length < len + 1) {
+    const v = W[W.length-1]; const a = nbs(v).slice();
+    const ok = a.filter(x => dist0(x) <= maxR);
+    W.push(ok[Math.floor(rng() * ok.length)]);
+  }
+  return W;
+}
+function mulberry(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+if (typeof module !== 'undefined') module.exports = {V, nb, nbs, turns, isBad, findMoves, applyMove, reduceAll, badCount, randomWalk, mulberry, pickMove, S, triColor, dist0};
+// ---- Fundamental octagon of the genus-2 surface and its side pairings ----
+// side k runs from corner c_{k-1} to c_k through m_k (the k-th neighbour of the centre vertex)
+const PARTNER = [6, 7, 4, 5, 2, 3, 0, 1];
+const J = M => [M[0], M[3], -M[6], M[1], M[4], -M[7], -M[2], -M[5], M[8]]; // Lorentz inverse: J M^T J
+const minv = M => J(M);
+const KM = Math.tanh(S);                       // Klein radius of the m_k
+const CORNER = (() => { // third vertex of triangle (m_0, m_1, c_0)
+  const v0 = 0, a = nb(v0, 0), b = nb(v0, 1);
+  const ia = idxOf(a, v0); // around a, triangles; find the common neighbour of a and b other than v0
+  const na = nbs(a), nbb = nbs(b); const c = na.find(x => x !== v0 && nbb.includes(x));
+  return V[c].p;
+})();
+const KC = Math.hypot(CORNER[0], CORNER[1]) / CORNER[2];
+const kAng = k => k * Math.PI / 4;
+const mK = k => [KM * Math.cos(kAng(k)), KM * Math.sin(kAng(k))];
+const cK = k => [KC * Math.cos(kAng(k) + Math.PI / 8), KC * Math.sin(kAng(k) + Math.PI / 8)];
+// side k line: through c_{k-1}, c_k ; outward normal at angle kAng(k); offset = distance of m_k... in Klein, side is straight
+const SIDE_D = KC * Math.cos(Math.PI / 8);     // distance from origin to side line in Klein model
+const halfTurn = i => mmul(mmul(STEPS[i], rot(Math.PI)), minv(STEPS[i]));
+// for a point beyond side j, apply DECK[j] to bring it back (maps the octagon across side j onto the octagon, via partner i)
+const DECK = Array.from({length: 8}, (_, j) => { const i = PARTNER[j]; return mmul(halfTurn(i), rot((i - j) * Math.PI / 4)); });
+function toOct(p) {
+  let q = p, guard = 0;
+  for (;;) {
+    const kx = q[0] / q[2], ky = q[1] / q[2];
+    let best = -1, bv = 1e-12;
+    for (let j = 0; j < 8; j++) { const v = kx * Math.cos(kAng(j)) + ky * Math.sin(kAng(j)) - SIDE_D; if (v > bv) { bv = v; best = j; } }
+    if (best < 0 || ++guard > 40) return [kx, ky, q];
+    q = mvec(DECK[best], q);
+    q = normH(q);
+  }
+}
+// which of the 16 triangles of T contains Klein point k: 0..7 centre triangles (0,m_i,m_{i+1}), 8..15 corner triangles
+function triIndex(kx, ky) {
+  let a = Math.atan2(ky, kx); if (a < 0) a += 2 * Math.PI;
+  const i = Math.min(7, Math.floor(a / (Math.PI / 4)));
+  const A = mK(i), B = mK(i + 1);
+  const cr = (B[0] - A[0]) * (ky - A[1]) - (B[1] - A[1]) * (kx - A[0]);
+  return cr >= 0 ? i : 8 + i;
+}
+function toOctM(p) {
+  let q = p, G = [1,0,0, 0,1,0, 0,0,1], guard = 0;
+  for (;;) {
+    const kx = q[0] / q[2], ky = q[1] / q[2];
+    let best = -1, bv = 1e-12;
+    for (let j = 0; j < 8; j++) { const v = kx * Math.cos(kAng(j)) + ky * Math.sin(kAng(j)) - SIDE_D; if (v > bv) { bv = v; best = j; } }
+    if (best < 0 || ++guard > 40) return [kx, ky, G];
+    G = mmul(DECK[best], G); q = normH(mvec(DECK[best], q));
+  }
+}
+if (typeof module !== 'undefined') module.exports = {toOct, triIndex, KM, KC, SIDE_D, DECK, mK, cK};
+// ===== Subdivided reducing triangulation of the genus-2 surface (quotient of the {3,8} tiling) =====
+// Each of the 16 equilateral triangles is cut into NSUB^2 triangles (Fig. 1 of the Tutte paper, iterated):
+// corner-type ("up") triangles keep the colour, middle-type ("down") ones flip it.
+const NSUB = 8;
+function canon(y) {
+  // y in the closed octagon; returns the canonical representative among its glued copies and the deck map to it
+  const key = q => Math.round(q[0] / q[2] * 1e6) + ':' + Math.round(q[1] / q[2] * 1e6);
+  const seen = new Map(); const st = [[y, [1,0,0, 0,1,0, 0,0,1]]]; seen.set(key(y), st[0]);
+  for (let s = 0; s < st.length; s++) {
+    const [z, M] = st[s], kx = z[0] / z[2], ky = z[1] / z[2];
+    for (let j = 0; j < 8; j++) {
+      const v = kx * Math.cos(j * Math.PI / 4) + ky * Math.sin(j * Math.PI / 4) - SIDE_D;
+      if (Math.abs(v) < 1e-7) { const z2 = normH(mvec(DECK[j], z)), k2 = key(z2); if (!seen.has(k2)) { const e = [z2, mmul(DECK[j], M)]; seen.set(k2, e); st.push(e); } }
+    }
+  }
+  let best = null; for (const [k, e] of seen) if (best === null || k < best[0]) best = [k, e[0], e[1]];
+  return {key: best[0], rep: best[1], M: best[2]};
+}
+function buildRT() {
+  const RB = 3.7;
+  // big triangles of the {3,8} tiling near the octagon
+  const bigs = [], seenT = new Set();
+  for (let v = 0; v < V.length; v++) {
+    if (dist0(v) > RB) continue;
+    for (let j = 0; j < 8; j++) {
+      const a = nb(v, j), b = nb(v, j + 1);
+      if (Math.max(dist0(a), dist0(b)) > RB + 1.6) continue;
+      const k = [v, a, b].sort((x, y) => x - y).join(); if (seenT.has(k)) continue; seenT.add(k);
+      bigs.push([v, a, b, triColor(v, j)]);
+    }
+  }
+  // subdivide
+  const pid = new Map(), P = [], tris = [], evenP = new Set(), even4P = new Set();
+  const pk = p => Math.round(p[0] * 1e5) + ',' + Math.round(p[1] * 1e5);
+  const id = p => { const k = pk(p); let i = pid.get(k); if (i === undefined) { i = P.length; P.push(p); pid.set(k, i); } return i; };
+  for (const [v, a, b, c] of bigs) {
+    const Pv = V[v].p, Pa = V[a].p, Pb = V[b].p, n = NSUB;
+    const Q = (i, j) => { const k = n - i - j; const q = id(normH([(i*Pa[0]+j*Pb[0]+k*Pv[0])/n, (i*Pa[1]+j*Pb[1]+k*Pv[1])/n, (i*Pa[2]+j*Pb[2]+k*Pv[2])/n])); if (i % 2 === 0 && j % 2 === 0) evenP.add(q); if (i % 4 === 0 && j % 4 === 0) even4P.add(q); return q; };
+    for (let i = 0; i < n; i++) for (let j = 0; j < n - i; j++) {
+      tris.push([Q(i, j), Q(i+1, j), Q(i, j+1), c]);
+      if (i + j < n - 1) tris.push([Q(i+1, j), Q(i+1, j+1), Q(i, j+1), 1 - c]);
+    }
+  }
+  // fans around patch vertices
+  const fan = new Map();
+  for (const [x, y, z, c] of tris) for (const [p, q, r] of [[x, y, z], [y, z, x], [z, x, y]]) { if (!fan.has(p)) fan.set(p, new Map()); fan.get(p).set(q, [r, c]); }
+  // classes
+  const cls = new Array(P.length), Tx = new Array(P.length), classKey = new Map(), reps = [];
+  for (let i = 0; i < P.length; i++) {
+    const [, , G] = toOctM(P[i]); const y = normH(mvec(G, P[i])); const cn = canon(y);
+    let c = classKey.get(cn.key); if (c === undefined) { c = reps.length; classKey.set(cn.key, c); reps.push(cn.rep); }
+    cls[i] = c; Tx[i] = mmul(cn.M, G);
+  }
+  const NV = reps.length, nbr = [], hmat = [], col = [], deg = [];
+  for (let u = 0; u < NV; u++) {
+    const r = pid.get(pk(reps[u])); if (r === undefined) throw new Error('rep missing ' + u);
+    const f = fan.get(r); const start = f.keys().next().value; const order = [start]; const cs = [];
+    for (;;) { const [nx, c] = f.get(order[order.length - 1]); cs.push(c); if (nx === start) break; order.push(nx); if (order.length > 40) throw new Error('open fan'); }
+    if (order.length !== f.size) throw new Error('fan mismatch');
+    nbr.push(order.map(x => cls[x])); hmat.push(order.map(x => minv(Tx[x]))); col.push(cs); deg.push(order.length);
+  }
+  const idxMap = nbr.map(L => { const m = new Map(); L.forEach((v, j) => m.set(v, j)); return m; });
+  // display triangles: the small triangles inside the octagon (by centroid)
+  const disp = [];
+  for (const [x, y, z, c] of tris) {
+    const g = normH([P[x][0]+P[y][0]+P[z][0], P[x][1]+P[y][1]+P[z][1], P[x][2]+P[y][2]+P[z][2]]), kx = g[0] / g[2], ky = g[1] / g[2];
+    let inside = true; for (let j = 0; j < 8; j++) if (kx * Math.cos(j * Math.PI / 4) + ky * Math.sin(j * Math.PI / 4) > SIDE_D) inside = false;
+    if (inside) disp.push([P[x], P[y], P[z], c]);
+  }
+  const even = new Array(NV).fill(false); for (let i = 0; i < P.length; i++) if (evenP.has(i)) even[cls[i]] = true;
+  const even4 = new Array(NV).fill(false); for (let i = 0; i < P.length; i++) if (even4P.has(i)) even4[cls[i]] = true;
+  return {NV, nbr, hmat, col, deg, idxMap, reps, disp, even, even4};
+}
+
+// ===== reduction moves on a general reducing triangulation (paper 1, §3.4–3.5) =====
+function makeReducer(R) {
+  const idx = (v, u) => { const j = R.idxMap[v].get(u); if (j === undefined) throw new Error('not adjacent'); return j; };
+  const md = (x, d) => ((x % d) + d) % d;
+  function turn(u, v, w) {
+    const d = R.deg[v], iu = idx(v, u), iw = idx(v, w), L = md(iu - iw, d);
+    const k = L <= 3 ? L : (d - L <= 3 ? -(d - L) : L);
+    return {k, col: R.col[v][md(iu - 1, d)] === 1 ? 'r' : 'b'};
+  }
+  const isBad = t => t.k === 0 || Math.abs(t.k) === 1 || (Math.abs(t.k) === 2 && t.col === 'r');
+  const okEnd = t => t === null || !(t.k >= -1 && t.k <= 3);
+  // linear walk W (array of vertices); returns candidate moves {a,b} with W[a..b] pushed left
+  function movesLinear(W, cyc) {
+    const n = W.length, res = [];
+    // for a closed walk, W = C rotated, with W[n-1] === W[0]; turns at index 0 use the wrap
+    const T = i => {
+      if (!cyc && (i <= 0 || i >= n - 1)) return null;
+      const ii = cyc ? md(i, n - 1) : i;
+      const prev = cyc ? W[md(ii - 1, n - 1)] : W[ii - 1], next = cyc ? W[md(ii + 1, n - 1)] : W[ii + 1];
+      return turn(prev, W[ii], next);
+    };
+    const m = cyc ? n - 1 : n - 1; // number of turn positions to scan
+    for (let i = cyc ? 0 : 1; i < (cyc ? n - 1 : n - 1); i++) {
+      const t = T(i);
+      if (t.k === 0) res.push({a: i - 1, b: i + 1});
+      else if (t.k === 1) res.push({a: i - 1, b: i + 1});
+      else if (t.k === 2) {
+        let j = i + 1, guard = 0; while ((cyc || j < n - 1) && T(j).k === 3 && ++guard < n) j++;
+        if ((cyc || j < n - 1) && T(j).k === 2 && j - i < n - 1) res.push({a: i - 1, b: j + 1});
+        if (t.col === 'r') {
+          let s = i - 1, e = i + 1, g1 = 0, g2 = 0;
+          while ((cyc || s >= 1) && T(s) && T(s).k === 3 && ++g1 < n) s--;
+          while ((cyc || e < n - 1) && T(e) && T(e).k === 3 && ++g2 < n) e++;
+          if (okEnd(T(s)) && okEnd(T(e)) && e - s <= n - 1) res.push({a: s, b: e});
+        }
+      }
+    }
+    return res;
+  }
+  function pushLeft(W, a, b) {
+    const sub = [W[a]];
+    for (let j = a + 1; j < b; j++) {
+      const v = W[j], d = R.deg[v], ip = idx(v, W[j-1]), inx = idx(v, W[j+1]), L = md(ip - inx, d);
+      for (let s = 1; s < L; s++) { const x = R.nbr[v][md(ip - s, d)]; if (sub[sub.length-1] !== x) sub.push(x); }
+    }
+    if (sub[sub.length-1] !== W[b]) sub.push(W[b]);
+    return sub;
+  }
+  return {turn, isBad, movesLinear, pushLeft, idx};
+}
+
+// ===== loop-graph straightening (paper 1, Lemma 4.2) =====
+// a loop is a cyclic list of vertices starting at the basepoint; returns the list of successive states
+function straightenStates(R, RD, loops, rng) {
+  const md = (x, d) => ((x % d) + d) % d;
+  const rot = (C, r) => C.slice(r).concat(C.slice(0, r));
+  const revB = C => [C[0]].concat(C.slice(1).reverse());
+  let cur = loops.map(C => C.slice());
+  const states = [cur.map(C => C.slice())];
+  let major = 0; cur.forEach((C, i) => { if (C.length < cur[major].length) major = i; });
+  function applyCyclic(C, m) {
+    const n = C.length, a = md(m.a, n), len = m.b - m.a;
+    const L = rot(C, a).concat([C[a]]);
+    const sub = RD.pushLeft(L, 0, len);
+    let newL = sub.concat(L.slice(len + 1));
+    let cyc = newL.slice(0, -1); if (!cyc.length) cyc = [newL[0]];
+    const q = md(-a, n); let bpIdx, step = null;
+    if (q === 0) bpIdx = 0;
+    else if (q >= len) bpIdx = q - len + sub.length - 1;
+    else {
+      const v = L[q]; let best = -1, bd = 1e9;
+      sub.forEach((x, k) => { if (x !== v && R.idxMap[v].has(x)) { const d = Math.abs(k - q); if (d < bd) { bd = d; best = k; } } });
+      if (best < 0) best = sub.indexOf(v) >= 0 ? sub.indexOf(v) : 0;
+      bpIdx = best; if (sub[best] !== v) step = [v, sub[best]];
+    }
+    return {C: rot(cyc, md(bpIdx, cyc.length)), step};
+  }
+  // 1) major loop -> reduced closed walk, dragging the basepoint along it
+  for (let guard = 0; guard < 5000; guard++) {
+    const C = cur[major]; if (C.length < 3) break;
+    const W = C.concat([C[0]]);
+    let mv = RD.movesLinear(W, true), rev = false;
+    if (!mv.length) { mv = RD.movesLinear(revB(C).concat([C[0]]), true); rev = true; }
+    if (!mv.length) break;
+    const m = mv[Math.floor(rng() * mv.length)];
+    let out = applyCyclic(rev ? revB(C) : C, m);
+    const newMajor = rev ? revB(out.C) : out.C;
+    cur = cur.map((M, i) => {
+      if (i === major) return newMajor;
+      if (!out.step) return M;
+      const [v, t] = out.step; return [t].concat(M, [v]);
+    });
+    states.push(cur.map(C2 => C2.slice()));
+  }
+  // 2) minor loops -> reduced walks from the basepoint to itself
+  for (let i = 0; i < cur.length; i++) {
+    if (i === major) continue;
+    for (let guard = 0; guard < 5000; guard++) {
+      const W = cur[i].concat([cur[i][0]]);
+      let mv = RD.movesLinear(W, false), rev = false;
+      if (!mv.length) { mv = RD.movesLinear(W.slice().reverse(), false); rev = true; }
+      if (!mv.length) break;
+      const m = mv[Math.floor(rng() * mv.length)];
+      const Wd = rev ? W.slice().reverse() : W;
+      const sub = RD.pushLeft(Wd, m.a, m.b);
+      let NW = Wd.slice(0, m.a).concat(sub, Wd.slice(m.b + 1)); if (rev) NW.reverse();
+      cur = cur.slice(); cur[i] = NW.length > 1 ? NW.slice(0, -1) : NW;
+      states.push(cur.map(C2 => C2.slice()));
+    }
+  }
+  return {states, major};
+}
+
+// ===== random sparse loop graph at a basepoint =====
+function liftPos(R, u, g) { return normH(mvec(g, R.reps[u])); }
+function genLoops(R, RD, rng, count) {
+  const hdist = (a, b) => Math.acosh(Math.max(1, -(a[0]*b[0] + a[1]*b[1] - a[2]*b[2])));
+  const I = [1,0,0, 0,1,0, 0,0,1];
+  // basepoint: a vertex near the middle of the octagon
+  const near = []; for (let u = 0; u < R.NV; u++) { const p = R.reps[u]; if (Math.acosh(p[2]) < 1.2 && R.deg[u] === 6) near.push(u); }
+  const b = near[Math.floor(rng() * near.length)];
+  const p0 = R.reps[b];
+  const reduceBased = C => { // reduced form of a based loop, for sparseness checks
+    let W = C.concat([C[0]]);
+    for (let g = 0; g < 5000; g++) { let mv = RD.movesLinear(W, false), rev = false; if (!mv.length) { mv = RD.movesLinear(W.slice().reverse(), false); rev = true; } if (!mv.length) break;
+      const m = mv[0]; let Wd = rev ? W.slice().reverse() : W; const sub = RD.pushLeft(Wd, m.a, m.b); let NW = Wd.slice(0, m.a).concat(sub, Wd.slice(m.b + 1)); if (rev) NW.reverse(); W = NW; }
+    return W;
+  };
+  const loops = [], forms = [];
+  for (let attempt = 0; loops.length < count && attempt < 200; attempt++) {
+    // target: a random deck element (word of length 1-2 in the side pairings)
+    let g = I; const wl = 1 + Math.floor(rng() * 2);
+    for (let k = 0; k < wl; k++) g = mmul(g, DECK[Math.floor(rng() * 8)]);
+    const target = normH(mvec(g, p0));
+    let u = b, G = I; const C = [b];
+    const len = 34 + Math.floor(rng() * 30);
+    for (let s = 0; s < 400; s++) {
+      const here = liftPos(R, u, G);
+      if (hdist(here, target) < 1e-6 && s > 4) break;
+      const opts = R.nbr[u].map((v, j) => { const G2 = mmul(G, R.hmat[u][j]); return {v, G2, d: hdist(liftPos(R, v, G2), target)}; });
+      const late = s > len;
+      const w = opts.map(o => late ? Math.exp(-40 * o.d) : Math.exp(-3.2 * o.d));
+      const mx = Math.max(...w), ww = w.map(x => x / mx + (late ? 0 : 0.35)), tot = ww.reduce((x, y) => x + y);
+      let r = rng() * tot, i = 0; while ((r -= ww[i]) > 0 && i < ww.length - 1) i++;
+      if (late) i = opts.reduce((bi, o, k) => o.d < opts[bi].d ? k : bi, 0);
+      u = opts[i].v; G = opts[i].G2; C.push(u);
+    }
+    if (C[C.length - 1] !== b || hdist(liftPos(R, u, G), target) > 1e-6) continue;
+    C.pop();
+    const f = reduceBased(C); if (f.length < 3) continue;
+    const key = f.join(), rkey = f.slice().reverse().join();
+    if (forms.some(x => x === key || x === rkey)) continue;
+    forms.push(key); loops.push(C);
+  }
+  return {b, loops};
+}
+if (typeof module !== 'undefined') module.exports = {buildRT, makeReducer, straightenStates, genLoops};
+// ===== Drawings of graphs as homomorphisms Ĝ -> T¹, and the harmonizing moves of §5 (Tutte paper) =====
+function makeDrawing(R) {
+  // G = the coarse triangulation subdivided twice: its vertices are the "even" vertices of T,
+  // each edge of G runs straight through one odd vertex of T
+  const D = {vt: [], orig: [], alive: [], E: [], inc: [], par: [], gE: []};
+  const vid = new Map();
+  const addV = (t, o) => { const i = D.vt.length; D.vt.push(t); D.orig.push(o); D.alive.push(true); D.inc.push(new Set()); D.par.push(i); return i; };
+  const addE = (a, b, g) => { const e = D.E.length; D.E.push({a, b, alive: true, g}); D.inc[a].add(e); D.inc[b].add(e); return e; };
+  // G: vertices on the 4-lattice (coarse triangulation subdivided once), edges = straight runs of 4 small edges
+  const isG = R.even4, STEP = 4;
+  for (let t = 0; t < R.NV; t++) if (isG[t]) vid.set(t, addV(t, true));
+  const seen = new Set();
+  for (let u = 0; u < R.NV; u++) {
+    if (!isG[u]) continue;
+    for (let k = 0; k < R.deg[u]; k++) {
+      const path = [u, R.nbr[u][k]];
+      while (path.length < STEP + 1) { const a = path[path.length - 2], b = path[path.length - 1], d = R.deg[b]; path.push(R.nbr[b][(R.idxMap[b].get(a) + d / 2) % d]); }
+      const w = path[STEP]; if (!isG[w] || path.slice(1, -1).some(x => isG[x])) continue;
+      const key = u < w ? path.join(',') : path.slice().reverse().join(','); if (seen.has(key)) continue; seen.add(key);
+      const g = D.gE.length; D.gE.push([vid.get(u), vid.get(w)]);
+      let prev = vid.get(u);
+      for (let i = 1; i < STEP; i++) { const x = addV(path[i], false); addE(prev, x, g); prev = x; }
+      addE(prev, vid.get(w), g);
+    }
+  }
+  D.addV = addV; D.addE = addE;
+  return D;
+}
+function cloneDrawing(D) {
+  const C = {vt: D.vt.slice(), orig: D.orig.slice(), alive: D.alive.slice(), E: D.E.map(e => ({...e})), inc: D.inc.map(s => new Set(s)), par: D.par.slice(), gE: D.gE};
+  C.addV = (t, o) => { const i = C.vt.length; C.vt.push(t); C.orig.push(o); C.alive.push(true); C.inc.push(new Set()); C.par.push(i); return i; };
+  C.addE = (a, b, g) => { const e = C.E.length; C.E.push({a, b, alive: true, g}); C.inc[a].add(e); C.inc[b].add(e); return e; };
+  return C;
+}
+const other = (D, e, v) => D.E[e].a === v ? D.E[e].b : D.E[e].a;
+
+// homotopy: drag vertex v one step to the neighbouring T-vertex x; every incident edge gets a new bend at the old place
+function dragStep(D, v, x) {
+  const t = D.vt[v];
+  for (const e of [...D.inc[v]]) {
+    const u = other(D, e, v), s = D.addV(t, false);
+    D.inc[v].delete(e); if (D.E[e].a === v) D.E[e].a = s; else D.E[e].b = s; D.inc[s].add(e);
+    D.addE(s, v, D.E[e].g);
+  }
+  D.vt[v] = x;
+}
+// move a cluster to an adjacent T-vertex and contract the edges that became degenerate
+function moveTo(D, v, x) {
+  D.vt[v] = x; let cur = v;
+  for (let again = true; again;) {
+    again = false;
+    for (const e of D.inc[cur]) { const u = other(D, e, cur); if (D.vt[u] === x) { cur = merge(D, u, cur); again = true; break; } }
+  }
+  return cur;
+}
+function merge(D, a, b) { // contract all edges between a and b; survivor keeps the 'orig' flag
+  let keep = D.orig[a] && !D.orig[b] ? a : b, gone = keep === a ? b : a;
+  for (const e of [...D.inc[gone]]) {
+    const E = D.E[e]; D.inc[gone].delete(e);
+    if (E.a === gone) E.a = keep; if (E.b === gone) E.b = keep;
+    if (E.a === E.b) { E.alive = false; D.inc[keep].delete(e); } else D.inc[keep].add(e);
+  }
+  D.orig[keep] = D.orig[keep] || D.orig[gone]; D.alive[gone] = false; D.par[gone] = keep;
+  if (gone === b) { /* nothing */ }
+  return keep;
+}
+// which move (if any) applies at cluster v: {kind:'shorten'|'flip', x}
+function moveAt(R, D, v) {
+  if (!D.alive[v] || !D.inc[v].size) return null;
+  const t = D.vt[v], d = R.deg[t], cnt = new Map();
+  for (const e of D.inc[v]) { const j = R.idxMap[t].get(D.vt[other(D, e, v)]); cnt.set(j, (cnt.get(j) || 0) + 1); }
+  const S = [...cnt.keys()];
+  if (S.length === 1) return {kind: 'shorten', x: R.nbr[t][S[0]]};
+  if (S.length > 3) return null;
+  const md = x => ((x % d) + d) % d;
+  for (const j of S) {
+    const inW = k => S.every(s => md(s - j) <= k);
+    if (inW(1)) { const j2 = md(j + 1); return {kind: 'shorten', x: R.nbr[t][(cnt.get(j) || 0) >= (cnt.get(j2) || 0) ? j : j2]}; }
+    if (inW(2)) {
+      if (cnt.has(md(j + 1))) return {kind: 'shorten', x: R.nbr[t][md(j + 1)]};
+      if (S.length === 2 && cnt.has(md(j + 2)) && R.col[t][md(j + 1)] === 1) return {kind: 'flip', x: R.nbr[t][md(j + 1)]};
+    }
+  }
+  return null;
+}
+// one round: an independent set of moves (shortenings take priority over flips)
+function harmonizeRound(R, D, rng) {
+  const cand = [];
+  for (let v = 0; v < D.vt.length; v++) { const m = moveAt(R, D, v); if (m) cand.push([v, m]); }
+  if (!cand.length) return null;
+  const sh = cand.filter(c => c[1].kind === 'shorten'), pool = sh.length ? sh : cand;
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+  const busy = new Set(), chosen = [];
+  for (const [v, m] of pool) {
+    if (busy.has(v)) continue;
+    let ok = true; for (const e of D.inc[v]) if (busy.has(other(D, e, v))) { ok = false; break; }
+    if (!ok) continue;
+    chosen.push([v, m]); busy.add(v); for (const e of D.inc[v]) busy.add(other(D, e, v));
+  }
+  return {moves: chosen, kind: sh.length ? 'shorten' : 'flip'};
+}
+function findV(D, v) { while (D.par[v] !== v) v = D.par[v]; return v; }
+function drawingSize(D) { let n = 0; for (const e of D.E) if (e.alive) n++; return n; }
+if (typeof module !== 'undefined') module.exports = {findV, makeDrawing, cloneDrawing, dragStep, moveTo, moveAt, harmonizeRound, drawingSize};
+// ===== spreading a weak embedding into a nearby embedding =====
+// Each T-vertex gets a small local chart; offsets o_v solve the "connection" Tutte system
+//   o_v = mean_w ( Rot_vw o_w + kappa * d_vw )
+// (neighbours' offsets parallel-transported into v's chart, plus a pull towards each neighbouring T-vertex).
+function chartData(R) {
+  // B[u]: isometry taking the origin to rep[u]
+  const B = R.reps.map(c => {
+    const r = Math.acosh(c[2]), th = Math.atan2(c[1], c[0]);
+    return mmul(mmul(rot(th), boostX(r)), rot(-th));
+  });
+  const Rot = [], Dir = [];
+  for (let u = 0; u < R.NV; u++) {
+    Rot.push([]); Dir.push([]);
+    const Bi = minv(B[u]);
+    R.nbr[u].forEach((w, j) => {
+      const N = mvec(mmul(Bi, R.hmat[u][j]), R.reps[w]); // neighbour seen from u's chart
+      const d = Math.atan2(N[1], N[0]), dist = Math.acosh(N[2]);
+      // translation along the geodesic from N back to the origin, composed with everything
+      const tau = mmul(mmul(rot(d), boostX(-dist)), rot(-d));
+      const M = mmul(mmul(mmul(tau, Bi), R.hmat[u][j]), B[w]); // maps w's chart to u's chart, fixes origin
+      Rot[u].push([M[0], M[1], M[3], M[4]]);
+      Dir[u].push([Math.cos(d), Math.sin(d)]);
+    });
+  }
+  return {B, Rot, Dir};
+}
+function solveOffsets(R, CD, D, iters) {
+  const n = D.vt.length, ox = new Float64Array(n), oy = new Float64Array(n);
+  const nbrs = []; // per vertex: [w, j]
+  for (let v = 0; v < n; v++) {
+    const L = [];
+    if (D.alive[v]) for (const e of D.inc[v]) { const w = D.E[e].a === v ? D.E[e].b : D.E[e].a; L.push([w, R.idxMap[D.vt[v]].get(D.vt[w])]); }
+    nbrs.push(L);
+  }
+  for (let it = 0; it < iters; it++) {
+    let delta = 0;
+    for (let v = 0; v < n; v++) {
+      const L = nbrs[v]; if (!L.length) continue;
+      const t = D.vt[v]; let sx = 0, sy = 0;
+      for (const [w, j] of L) { const r = CD.Rot[t][j], d = CD.Dir[t][j]; sx += r[0]*ox[w] + r[1]*oy[w] + d[0]; sy += r[2]*ox[w] + r[3]*oy[w] + d[1]; }
+      sx /= L.length; sy /= L.length; delta = Math.max(delta, Math.abs(sx - ox[v]) + Math.abs(sy - oy[v])); ox[v] = sx; oy[v] = sy;
+    }
+    if (delta < 1e-9) break;
+  }
+  return {ox, oy};
+}
+// hyperboloid position of v with offset scaled by k (Klein coordinates in v's chart)
+function placeAt(R, CD, D, O, v, k) {
+  let x = O.ox[v] * k, y = O.oy[v] * k; const r = Math.hypot(x, y); if (r > 0.95) { x *= 0.95 / r; y *= 0.95 / r; }
+  const s = 1 / Math.sqrt(1 - x*x - y*y);
+  return mvec(CD.B[D.vt[v]], [x * s, y * s, s]);
+}
+if (typeof module !== 'undefined') module.exports = {chartData, solveOffsets, placeAt};
+// ===== perturbing a weak embedding into an embedding: lane orders on T-edges + vertex disks =====
+function weakLayout(R, D) {
+  const md = (x, d) => ((x % d) + d) % d;
+  const deg = v => D.inc[v].size;
+  const isNode = v => D.orig[v] || deg(v) !== 2;
+  const tIdx = (z, q) => R.idxMap[z].get(q);
+  // strands per T-edge (key 'x-y' with x<y), oriented x->y: [edge id, vertex at x, vertex at y]
+  const byT = new Map();
+  for (let e = 0; e < D.E.length; e++) {
+    const E = D.E[e]; if (!E.alive) continue;
+    let a = E.a, b = E.b; if (D.vt[a] > D.vt[b]) [a, b] = [b, a];
+    const k = D.vt[a] + '-' + D.vt[b]; if (!byT.has(k)) byT.set(k, []); byT.get(k).push([e, a, b]);
+  }
+  const otherEdge = (v, e) => { for (const f of D.inc[v]) if (f !== e) return f; return -1; };
+  const oth = (e, v) => D.E[e].a === v ? D.E[e].b : D.E[e].a;
+  // side of node c (at z) w.r.t. a path entering z from x and leaving to q: -1 left, +1 right, 0 unknown
+  function nodeSide(c, z, ix, Lq, skipE) {
+    let l = 0, r = 0; const d = R.deg[z];
+    for (const f of D.inc[c]) { if (f === skipE) continue; const L = md(ix - tIdx(z, D.vt[oth(f, c)]), d); if (L === 0 || L === Lq) continue; if (L < Lq) l++; else r++; }
+    return l && !r ? -1 : r && !l ? 1 : 0;
+  }
+  function nodeSpan(c, z, ix, skipE) {
+    const d = R.deg[z], Ls = [];
+    for (const f of D.inc[c]) { if (f === skipE) continue; const L = md(ix - tIdx(z, D.vt[oth(f, c)]), d); if (L) Ls.push(L); }
+    return Ls;
+  }
+  // compare two strands travelling x->y (s = [e, vx, vy]); returns -1 if s1 is left of s2
+  function cmpDir(e1, v1, e2, v2, x, y, depth) {
+    for (let guard = 0; guard < 400; guard++) {
+      const z = y, d = R.deg[z], ix = tIdx(z, x);
+      if (v1 === v2) return 0;
+      const n1 = isNode(v1), n2 = isNode(v2);
+      if (!n1 && !n2) {
+        const f1 = otherEdge(v1, e1), f2 = otherEdge(v2, e2), w1 = oth(f1, v1), w2 = oth(f2, v2), q1 = D.vt[w1], q2 = D.vt[w2];
+        if (q1 === q2) { e1 = f1; e2 = f2; v1 = w1; v2 = w2; x = z; y = q1; continue; }
+        const L1 = md(ix - tIdx(z, q1), d), L2 = md(ix - tIdx(z, q2), d);
+        return L1 < L2 ? -1 : 1;
+      }
+      if (n1 && !n2) {
+        const f2 = otherEdge(v2, e2), w2 = oth(f2, v2), q2 = D.vt[w2], L2 = md(ix - tIdx(z, q2), d);
+        const sd = nodeSide(v1, z, ix, L2, e1); if (sd) return sd;
+        // node lying along the strand: carry on through it, along one of its edges going the same way
+        let f1 = -1; for (const f of D.inc[v1]) if (f !== e1 && D.vt[oth(f, v1)] === q2) { f1 = f; break; }
+        if (f1 < 0) return 0;
+        const w1 = oth(f1, v1); e1 = f1; v1 = w1; e2 = f2; v2 = w2; x = z; y = q2; continue;
+      }
+      if (!n1 && n2) {
+        const f1 = otherEdge(v1, e1), w1 = oth(f1, v1), q1 = D.vt[w1], L1 = md(ix - tIdx(z, q1), d);
+        const sd = nodeSide(v2, z, ix, L1, e2); if (sd) return -sd;
+        let f2 = -1; for (const f of D.inc[v2]) if (f !== e2 && D.vt[oth(f, v2)] === q1) { f2 = f; break; }
+        if (f2 < 0) return 0;
+        const w2 = oth(f2, v2); e1 = f1; v1 = w1; e2 = f2; v2 = w2; x = z; y = q1; continue;
+      }
+      const A = nodeSpan(v1, z, ix, e1), B = nodeSpan(v2, z, ix, e2);
+      if (!A.length || !B.length) return 0;
+      if (Math.max(...A) <= Math.min(...B)) return -1;
+      if (Math.min(...A) >= Math.max(...B)) return 1;
+      const ma = A.reduce((s, x) => s + x, 0) / A.length, mb = B.reduce((s, x) => s + x, 0) / B.length;
+      return ma < mb ? -1 : ma > mb ? 1 : 0;
+    }
+    return 0;
+  }
+  // the node reached by following a strand through pass-through vertices, starting with edge e into vertex v
+  function chainEnd(e, v) { for (let g = 0; g < 100000; g++) { if (isNode(v)) return v; const f = otherEdge(v, e); v = oth(f, v); e = f; } return v; }
+  let conflicts = 0;
+  const order = new Map();
+  for (const [k, L] of byT) {
+    const [x, y] = k.split('-').map(Number);
+    const cmp = (s1, s2) => {
+      const f = cmpDir(s1[0], s1[2], s2[0], s2[2], x, y);
+      const b = -cmpDir(s1[0], s1[1], s2[0], s2[1], y, x); // backwards: left becomes right
+      if (f && b && f !== b) conflicts++;
+      if (f || b) return f || b;
+      // undetermined both ways (parallel runs): break ties in a way that is consistent along the whole run
+      const ends1 = [chainEnd(s1[0], s1[2]), chainEnd(s1[0], s1[1])];
+      const sign = ends1[0] < ends1[1] ? 1 : ends1[0] > ends1[1] ? -1 : 1;
+      const g1 = D.E[s1[0]].g, g2 = D.E[s2[0]].g;
+      return sign * ((g1 - g2) || (Math.min(...ends1) - Math.min(chainEnd(s2[0], s2[2]), chainEnd(s2[0], s2[1]))) || 1);
+    };
+    const S = L.slice();
+    for (let i = 1; i < S.length; i++) { let j = i; while (j > 0 && cmp(S[j - 1], S[j]) > 0) { [S[j - 1], S[j]] = [S[j], S[j - 1]]; j--; } }
+    order.set(k, S);
+  }
+  // lane offset for each edge (signed, positive = left of x->y with x<y)
+  const lane = new Map();
+  for (const [k, S] of order) S.forEach((s, i) => lane.set(s[0], (S.length - 1) / 2 - i));
+  const laneCount = new Map(); for (const [k, S] of order) for (const s of S) laneCount.set(s[0], S.length);
+  return {lane, laneCount, conflicts};
+}
+// geometry: boundary points of disks and node positions, in each T-vertex chart; s scales the spread (0 = the drawing itself)
+function weakGeometry(R, CD, D, WL, s) {
+  const RHO = 0.36, BAND = 0.7; // fractions of the small edge length (Klein, in charts)
+  const md = (x, d) => ((x % d) + d) % d;
+  const edgeLen = Math.tanh(0.19);
+  // boundary point of edge e at its endpoint v (chart of D.vt[v])
+  const bp = new Map();
+  for (let e = 0; e < D.E.length; e++) {
+    const E = D.E[e]; if (!E.alive) continue;
+    for (const v of [E.a, E.b]) {
+      const w = v === E.a ? E.b : E.a, z = D.vt[v], j = R.idxMap[z].get(D.vt[w]), dir = CD.Dir[z][j];
+      const m = WL.laneCount.get(e) || 1, sp = Math.min(BAND / Math.max(1, m - 1), 0.16) * RHO * edgeLen;
+      let l = (WL.lane.get(e) || 0) * sp; if (D.vt[v] > D.vt[w]) l = -l; // lane sign is defined for x<y travelling x->y
+      const r = RHO * edgeLen;
+      bp.set(e + ':' + v, [s * (r * dir[0] - l * dir[1]), s * (r * dir[1] + l * dir[0])]);
+    }
+  }
+  // node / pass-through positions: centroid of their boundary points
+  const pos = new Map();
+  for (let v = 0; v < D.vt.length; v++) {
+    if (!D.alive[v] || !D.inc[v].size) continue;
+    let x = 0, y = 0, n = 0; for (const e of D.inc[v]) { const p = bp.get(e + ':' + v); x += p[0]; y += p[1]; n++; }
+    pos.set(v, [x / n, y / n]);
+  }
+  return {bp, pos};
+}
+const chartToH = (CD, z, k) => { const r2 = k[0]*k[0] + k[1]*k[1], sc = 1 / Math.sqrt(Math.max(1e-9, 1 - r2)); return mvec(CD.B[z], [k[0]*sc, k[1]*sc, sc]); };
+// polylines (hyperboloid points) of the perturbed drawing: one per edge: node -> boundary(v) -> boundary(w) -> node
+function weakPolylines(R, CD, D, G) {
+  const out = [];
+  for (let e = 0; e < D.E.length; e++) {
+    const E = D.E[e]; if (!E.alive) continue;
+    const a = E.a, b = E.b, za = D.vt[a], zb = D.vt[b], j = R.idxMap[za].get(zb);
+    const A0 = chartToH(CD, za, G.pos.get(a)), A1 = chartToH(CD, za, G.bp.get(e + ':' + a));
+    const Hb = R.hmat[za][j];
+    const B1 = mvec(Hb, chartToH(CD, zb, G.bp.get(e + ':' + b))), B0 = mvec(Hb, chartToH(CD, zb, G.pos.get(b)));
+    out.push({e, pts: [A0, A1, B1, B0]});
+  }
+  return out;
+}
+if (typeof module !== 'undefined') module.exports = {weakLayout, weakGeometry, weakPolylines};
+// ================= animation: embedded graph -> tangled drawing -> harmonious drawing -> nearby embedding =================
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const R = buildRT(), CD = chartData(R), D0 = makeDrawing(R);
+let W = 0, H = 0, DPR = 1, CX = 0, CY = 0, RAD = 1, bgCanvas = null;
+const INK = '#1f2024';
+const toScreen = p => { const [kx, ky] = toOct(p); const s = 1 + Math.sqrt(Math.max(0, 1 - kx*kx - ky*ky)); return [CX + kx / s * RAD, CY - ky / s * RAD]; };
+const kleinToScreen = (kx, ky) => { const s = 1 + Math.sqrt(Math.max(0, 1 - kx*kx - ky*ky)); return [CX + kx / s * RAD, CY - ky / s * RAD]; };
+const lerpH = (a, b, e) => normH([a[0]+(b[0]-a[0])*e, a[1]+(b[1]-a[1])*e, a[2]+(b[2]-a[2])*e]);
+
+function drawBackground() {
+  bgCanvas = document.createElement('canvas'); bgCanvas.width = W * DPR; bgCanvas.height = H * DPR;
+  const g = bgCanvas.getContext('2d'); g.scale(DPR, DPR); g.lineJoin = 'round';
+  const kl = p => [p[0] / p[2], p[1] / p[2]];
+  for (const [A, B, C, c] of R.disp) {
+    const pts = [A, B, C].map(kl); g.beginPath();
+    for (let s = 0; s < 3; s++) { const a = pts[s], b = pts[(s+1) % 3]; for (let t = 0; t < 4; t++) { const u = t / 4; const q = kleinToScreen(a[0]+(b[0]-a[0])*u, a[1]+(b[1]-a[1])*u); s || t ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); } }
+    g.closePath(); g.fillStyle = c ? '#f7c4c9' : '#ebebff'; g.fill();
+    g.strokeStyle = 'rgba(255,255,255,1)'; g.lineWidth = Math.max(0.6, RAD / 700); g.stroke();
+  }
+  g.beginPath();
+  for (let k = 0; k < 8; k++) { const a = cK(k - 1), b = cK(k); for (let t = 0; t <= 24; t++) { const u = t / 24; const q = kleinToScreen(a[0]+(b[0]-a[0])*u, a[1]+(b[1]-a[1])*u); k || t ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); } }
+  g.closePath(); g.strokeStyle = INK; g.lineWidth = Math.max(1.5, RAD / 260); g.stroke();
+}
+function resize() {
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR; cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  CX = W / 2; CY = H / 2; RAD = Math.min(W, H) * 0.47;
+  drawBackground(); scr.clear();
+}
+addEventListener('resize', resize);
+
+// ---- screen positions of T-vertices (cached) ----
+const scr = new Map();
+const tScreen = t => { let p = scr.get(t); if (!p) { p = toScreen(R.reps[t]); scr.set(t, p); } return p; };
+// draw a segment between hyperboloid points A,B (same frame), split where it crosses a seam
+function segPath(A, B, depthPts) {
+  const n = depthPts || 6; let prev = null;
+  for (let s = 0; s <= n; s++) {
+    const q = toScreen(lerpH(A, B, s / n));
+    if (prev && Math.hypot(q[0] - prev[0], q[1] - prev[1]) < RAD * 0.08) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+    prev = q;
+  }
+}
+const SEAM = () => RAD * 0.12;
+
+// ---- instance: a seeded run whose final drawing spreads into a verified embedding ----
+function runInstance(seed, record) {
+  const rng = mulberry(seed), D = cloneDrawing(D0), rounds = [];
+  const origs = []; for (let v = 0; v < D.vt.length; v++) if (D.orig[v]) origs.push(v);
+  for (let step = 0; step < 6; step++) {
+    const moved = [];
+    for (const v of origs) { const t = D.vt[v], nb = R.nbr[t]; const x = nb[Math.floor(rng() * nb.length)]; moved.push([v, t, x]); }
+    if (record) rounds.push({kind: 'tangle', before: null, moved});
+    for (const [v, t, x] of moved) dragStep(D, v, x);
+    if (record) rounds[rounds.length - 1].after = snapshot(D);
+  }
+  for (let g = 0; g < 500; g++) {
+    const r = harmonizeRound(R, D, rng); if (!r) break;
+    if (record) rounds.push({kind: r.kind, before: snapshot(D), moved: r.moves.map(([v, m]) => [v, D.vt[v], m.x])});
+    for (const [v, m] of r.moves) moveTo(D, v, m.x);
+  }
+  return {D, rounds};
+}
+function snapshot(D) {
+  const E = []; for (const e of D.E) if (e.alive) E.push([e.a, e.b]);
+  return {E, vt: D.vt.slice(), orig: D.orig.slice()};
+}
+function crossingCount(D, polys) {
+  const segs = [];
+  for (const {e, pts} of polys) for (let i = 0; i + 1 < pts.length; i++) {
+    const A = pts[i], B = pts[i + 1]; let prev = null;
+    for (let s = 0; s <= 4; s++) { const [x, y] = toOct(lerpH(A, B, s / 4)); if (prev && Math.hypot(x - prev[0], y - prev[1]) < 0.05) segs.push([prev[0], prev[1], x, y, e]); prev = [x, y]; }
+  }
+  const G = 300, grid = new Map(), cell = v => Math.floor((v + 1) / 2 * G);
+  segs.forEach((s, i) => { for (let x = cell(Math.min(s[0], s[2])); x <= cell(Math.max(s[0], s[2])); x++) for (let y = cell(Math.min(s[1], s[3])); y <= cell(Math.max(s[1], s[3])); y++) { const k = x * 1000 + y; if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i); } });
+  const seen = new Set(), orient = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  let c = 0;
+  for (const L of grid.values()) for (let p = 0; p < L.length; p++) for (let q = p + 1; q < L.length; q++) {
+    const i = L[p], j = L[q], key = i < j ? i * 1e7 + j : j * 1e7 + i; if (seen.has(key)) continue; seen.add(key);
+    const s = segs[i], u = segs[j]; if (s[4] === u[4]) continue;
+    const E1 = D.E[s[4]], E2 = D.E[u[4]]; if (E1.a === E2.a || E1.a === E2.b || E1.b === E2.a || E1.b === E2.b) continue;
+    if (orient(s[0], s[1], s[2], s[3], u[0], u[1]) * orient(s[0], s[1], s[2], s[3], u[2], u[3]) < 0 && orient(u[0], u[1], u[2], u[3], s[0], s[1]) * orient(u[0], u[1], u[2], u[3], s[2], s[3]) < 0) c++;
+  }
+  return c;
+}
+let seedBase = (Date.now() & 0xffff) * 7 + 3;
+function makeInstance() {
+  for (let tries = 0; tries < 25; tries++) {
+    const seed = seedBase++;
+    const {D} = runInstance(seed, false);
+    const WL = weakLayout(R, D), G1 = weakGeometry(R, CD, D, WL, 1);
+    if (crossingCount(D, weakPolylines(R, CD, D, G1)) === 0) {
+      const rec = runInstance(seed, true);
+      const harm = rec.rounds.filter(r => r.kind !== 'tangle');
+      // the input drawing is the tangled one; only the harmonizing moves are animated
+      return {rounds: harm, D: rec.D, WL, init: harm.length ? harm[0].before : snapshot(rec.D)};
+    }
+  }
+  return null;
+}
+
+// ---------------- drawing a snapshot with some vertices sliding ----------------
+function drawSnapshot(S, slide, e, alpha) {
+  const pos = new Map();
+  for (const [v, [t, x]] of slide) {
+    const j = R.idxMap[t].get(x), A = R.reps[t], B = mvec(R.hmat[t][j], R.reps[x]);
+    pos.set(v, toScreen(lerpH(A, B, e)));
+  }
+  const P = v => pos.get(v) || tScreen(S.vt[v]);
+  ctx.strokeStyle = INK; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.8, RAD / 210);
+  ctx.globalAlpha = alpha * 0.8;
+  ctx.beginPath();
+  const seam = SEAM();
+  for (const [a, b] of S.E) {
+    const pa = P(a), pb = P(b);
+    if (Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) < seam) { ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); continue; }
+    let u = a, w = b; if (slide.has(u)) { u = b; w = a; }
+    const tu = S.vt[u], A = R.reps[tu];
+    let Bp;
+    if (slide.has(w)) { const [t, x] = slide.get(w); const inF = y => { if (y === tu) return A; const jj = R.idxMap[tu].get(y); return jj === undefined ? null : mvec(R.hmat[tu][jj], R.reps[y]); }; const T0 = inF(t), T1 = inF(x); if (!T0 || !T1) continue; Bp = lerpH(T0, T1, e); }
+    else { const j = R.idxMap[tu].get(S.vt[w]); if (j === undefined) continue; Bp = mvec(R.hmat[tu][j], R.reps[S.vt[w]]); }
+    segPath(A, Bp, 8);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+  const r = Math.max(3.5, RAD / 110);
+  ctx.globalAlpha = alpha;
+  const seenT = new Set();
+  for (const [a, b] of S.E) for (const v of [a, b]) if (S.orig[v] && !seenT.has(v)) { seenT.add(v); const p = P(v); ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.stroke(); }
+  ctx.globalAlpha = 1;
+}
+function drawSpread(inst, s, alpha) {
+  const D = inst.D, G = weakGeometry(R, CD, D, inst.WL, s), polys = weakPolylines(R, CD, D, G);
+  ctx.globalAlpha = alpha * (0.8 + 0.2 * s); ctx.strokeStyle = INK; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(1.6, RAD / 210 - s * RAD / 900);
+  ctx.beginPath();
+  for (const {pts} of polys) for (let i = 0; i + 1 < pts.length; i++) segPath(pts[i], pts[i + 1], i === 1 ? 6 : 2);
+  ctx.stroke();
+  const r = Math.max(3.5, RAD / 110); ctx.globalAlpha = alpha;
+  for (let v = 0; v < D.vt.length; v++) {
+    if (!D.alive[v] || !D.orig[v] || !D.inc[v].size) continue;
+    const q = toScreen(chartToH(CD, D.vt[v], G.pos.get(v)));
+    ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------------- timeline ----------------
+let inst = null, phase = 'embed', phaseT = 0, ri = 0, roundT = 0, next = null;
+const ease = u => u * u * (3 - 2 * u);
+function frame(now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.clearRect(0, 0, W, H); ctx.drawImage(bgCanvas, 0, 0, W, H);
+  const dt = now - phaseT;
+  if (phase === 'embed') {
+    drawSnapshot(inst.init, new Map(), 0, Math.min(1, dt / 600));
+    if (dt > 2400) { ri = 0; roundT = now; phaseT = now; phase = inst.rounds.length ? 'rounds' : 'hold'; }
+  } else if (phase === 'rounds') {
+    const rd = inst.rounds[ri], dur = 420;
+    const u = Math.max(0, Math.min(1, (now - roundT) / dur)), e = ease(u);
+    const slide = new Map(rd.moved.map(([v, t, x]) => [v, [t, x]]));
+    drawSnapshot(rd.before, slide, e, 1);
+    if (u >= 1) { ri++; roundT = now; if (ri >= inst.rounds.length) { phase = 'hold'; phaseT = now; } }
+  } else if (phase === 'hold') {
+    drawSpread(inst, 0, 1);
+    if (dt > 1300) { phase = 'spread'; phaseT = now; }
+  } else if (phase === 'spread') {
+    drawSpread(inst, ease(Math.min(1, dt / 2600)), 1);
+    if (dt > 2600) { phase = 'rest'; phaseT = now; }
+  } else if (phase === 'rest') {
+    drawSpread(inst, 1, 1);
+    if (dt > 3800) { phase = 'fade'; phaseT = now; }
+  } else if (phase === 'fade') {
+    drawSpread(inst, 1, Math.max(0, 1 - dt / 800));
+    if (dt > 850) { inst = next || makeInstance(); next = null; phase = 'embed'; phaseT = now; }
+  }
+  if (phase === 'rest' && !next && dt > 300) next = makeInstance();
+  requestAnimationFrame(frame);
+}
+resize(); inst = makeInstance(); phaseT = performance.now(); requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
